@@ -29,6 +29,8 @@ Run the API with `npm run dev` and the durable worker separately with `npm run w
 
 The model response is bounded to 20 files and 1 MB, rejects absolute/traversal paths, and cannot directly execute commands. Repository text is explicitly treated as untrusted prompt content. See `.env.example` for required runtime configuration.
 
+For a live acceptance run, follow [the live setup checklist](docs/LIVE_SETUP.md). `scripts/bootstrap-local.sh` generates all non-provider secrets into an ignored, mode-0600 `.env.local` file.
+
 ## Next milestones
 
 1. Replace the local JSON store with Postgres using the `RunStore` contract.
