@@ -89,7 +89,7 @@ if (process.env.NODE_ENV !== "test") {
   const tokens = new GitHubAppTokens(appId, await readFile(keyPath, "utf8"));
   const orchestrator = new Orchestrator(
     new OpenAIGitHubAgent(tokens, openaiKey, model),
-    new SandboxHttpClient(sandboxUrl, sandboxToken, signingSecret),
+    new SandboxHttpClient(sandboxUrl, sandboxToken, signingSecret, id => tokens.installationToken(id)),
     new GitHubPullRequests(id => tokens.installationToken(id)),
     services.store,
   );

@@ -43,7 +43,7 @@ export interface CodingAgent {
 }
 
 export interface Sandbox {
-  runTests(repository: string, commit: string): Promise<TestResult>;
+  runTests(item: WorkItem, commit: string): Promise<TestResult>;
 }
 
 export interface PullRequests {

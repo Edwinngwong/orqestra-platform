@@ -14,7 +14,7 @@ const tokens = new GitHubAppTokens(required("GITHUB_APP_ID"), await readFile(req
 const queue = new PostgresJobQueue(pool);
 const orchestrator = new Orchestrator(
   new OpenAIGitHubAgent(tokens, required("OPENAI_API_KEY"), required("OPENAI_MODEL")),
-  new SandboxHttpClient(required("SANDBOX_URL"), required("SANDBOX_TOKEN"), required("RESULT_SIGNING_SECRET")),
+  new SandboxHttpClient(required("SANDBOX_URL"), required("SANDBOX_TOKEN"), required("RESULT_SIGNING_SECRET"), id => tokens.installationToken(id)),
   new GitHubPullRequests(id => tokens.installationToken(id)),
   new PostgresRunStore(pool),
 );

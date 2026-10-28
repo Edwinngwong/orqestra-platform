@@ -37,7 +37,7 @@ export class Orchestrator {
     await this.store.put(run);
     const change = await this.agent.implement(run.workItem);
     run.branch = change.branch;
-    const tests = await this.sandbox.runTests(run.workItem.repository, change.commit);
+    const tests = await this.sandbox.runTests(run.workItem, change.commit);
     run.testSummary = tests.summary;
     run.status = tests.passed ? "awaiting_pr_approval" : "tests_failed";
     await this.store.put(run);

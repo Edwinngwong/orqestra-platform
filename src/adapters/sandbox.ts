@@ -1,14 +1,16 @@
 import type { Sandbox, TestResult } from "../domain.js";
+import type { WorkItem } from "../domain.js";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 export class SandboxHttpClient implements Sandbox {
-  constructor(private readonly baseUrl: string, private readonly token: string, private readonly signingSecret: string, private readonly pollMs = 1000) {}
+  constructor(private readonly baseUrl: string, private readonly token: string, private readonly signingSecret: string, private readonly repositoryToken?: (installationId: number) => Promise<string>, private readonly pollMs = 1000) {}
 
-  async runTests(repository: string, commit: string): Promise<TestResult> {
+  async runTests(item: WorkItem, commit: string): Promise<TestResult> {
+    const repositoryToken = item.githubInstallationId && this.repositoryToken ? await this.repositoryToken(item.githubInstallationId) : undefined;
     const response = await fetch(`${this.baseUrl}/v1/runs`, {
       method: "POST",
       headers: { authorization: `Bearer ${this.token}`, "content-type": "application/json" },
-      body: JSON.stringify({ runId: crypto.randomUUID(), repository, commit, command: ["npm", "test"], timeoutSeconds: 900 }),
+      body: JSON.stringify({ runId: crypto.randomUUID(), repository: item.repository, commit, command: ["npm", "test"], timeoutSeconds: 900, ...(repositoryToken ? { repositoryToken } : {}) }),
     });
     if (!response.ok) throw new Error(`Sandbox rejected run (${response.status})`);
     const accepted = await response.json() as { request: { runId: string } };
