@@ -65,6 +65,15 @@ export class Orchestrator {
 
   audit(runId: string) { return this.store.audit(runId); }
 
+  async cancel(runId: string, actor = "human"): Promise<Run> {
+    const run = await this.get(runId);
+    if (["draft_pr_open", "cancelled"].includes(run.status)) throw new Error(`Cannot cancel from ${run.status}`);
+    run.status = "cancelled";
+    await this.store.put(run);
+    await this.record(run.id, "run_cancelled", actor);
+    return structuredClone(run);
+  }
+
   private async record(runId: string, action: string, actor: string): Promise<void> {
     await this.store.appendAudit({ at: new Date().toISOString(), runId, action, actor });
   }

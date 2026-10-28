@@ -31,7 +31,7 @@ test("accepts a signed GitHub issue and creates an approval-pending run", async 
     const denied = await fetch(`http://127.0.0.1:${address.port}/v1/runs/${result.runId}`);
     assert.equal(denied.status, 401);
     const approved = await fetch(`http://127.0.0.1:${address.port}/v1/runs/${result.runId}/approve-intake`, { method: "POST", headers: { authorization: "Bearer operator-secret", "x-orqestra-actor": "alice@example.test" } });
-    assert.equal(approved.status, 200);
+    assert.equal(approved.status, 202);
     assert.equal((await approved.json() as { status: string }).status, "queued");
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 });

@@ -23,6 +23,8 @@ For PostgreSQL development, run `docker compose up -d`, set `DATABASE_URL` from 
 
 Operator endpoints require `Authorization: Bearer $OPERATOR_TOKEN` and support reading a run or its audit history plus `approve-intake`, `execute`, and `approve-pr` actions under `/v1/runs/:id`.
 
+Intake approval enqueues an `execute_run` job. PostgreSQL workers lease jobs using `FOR UPDATE SKIP LOCKED`, renew leases with heartbeats, retry failures with bounded exponential backoff, and recover expired leases. Cancellation marks both the run and any pending or leased job as cancelled.
+
 ## Next milestones
 
 1. Replace the local JSON store with Postgres using the `RunStore` contract.

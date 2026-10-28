@@ -5,7 +5,8 @@ export type RunStatus =
   | "running"
   | "tests_failed"
   | "awaiting_pr_approval"
-  | "draft_pr_open";
+  | "draft_pr_open"
+  | "cancelled";
 
 export interface WorkItem {
   id: string;

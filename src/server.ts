@@ -4,6 +4,7 @@ import { Pool } from "pg";
 import { githubIssueToWorkItem, verifyGitHubSignature } from "./github-webhook.js";
 import { Orchestrator } from "./orchestrator.js";
 import { PostgresRunStore } from "./postgres-store.js";
+import { MemoryJobQueue, PostgresJobQueue, type JobQueue } from "./queue/jobs.js";
 import { JsonFileRunStore, type RunStore } from "./store.js";
 
 function authorized(request: IncomingMessage, token: string): boolean {
@@ -25,7 +26,7 @@ async function body(request: IncomingMessage): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-export function createPlatformServer(orchestrator: Orchestrator, options: { webhookSecret: string; operatorToken: string }) {
+export function createPlatformServer(orchestrator: Orchestrator, options: { webhookSecret: string; operatorToken: string }, queue: JobQueue = new MemoryJobQueue()) {
   return createServer(async (request, response) => {
     try {
       if (request.method === "POST" && request.url === "/webhooks/github") {
@@ -40,7 +41,7 @@ export function createPlatformServer(orchestrator: Orchestrator, options: { webh
         return run ? json(response, 201, { runId: run.id, status: run.status }) : json(response, 202, { duplicate: true });
       }
 
-      const match = request.url?.match(/^\/v1\/runs\/([0-9a-f-]+)(?:\/(audit|approve-intake|execute|approve-pr))?$/i);
+      const match = request.url?.match(/^\/v1\/runs\/([0-9a-f-]+)(?:\/(audit|approve-intake|execute|approve-pr|cancel))?$/i);
       if (!match || !authorized(request, options.operatorToken)) return json(response, match ? 401 : 404);
       const runId = match[1]!;
       const action = match[2];
@@ -49,9 +50,14 @@ export function createPlatformServer(orchestrator: Orchestrator, options: { webh
 
       if (request.method === "GET" && !action) return json(response, 200, await orchestrator.get(runId));
       if (request.method === "GET" && action === "audit") return json(response, 200, await orchestrator.audit(runId));
-      if (request.method === "POST" && action === "approve-intake") return json(response, 200, await orchestrator.approveIntake(runId, human));
+      if (request.method === "POST" && action === "approve-intake") {
+        const run = await orchestrator.approveIntake(runId, human);
+        await queue.enqueue(runId);
+        return json(response, 202, run);
+      }
       if (request.method === "POST" && action === "execute") return json(response, 200, await orchestrator.execute(runId));
       if (request.method === "POST" && action === "approve-pr") return json(response, 200, await orchestrator.approveDraftPullRequest(runId, human));
+      if (request.method === "POST" && action === "cancel") { await queue.cancel(runId); return json(response, 200, await orchestrator.cancel(runId, human)); }
       return json(response, 405);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Request failed";
@@ -60,23 +66,24 @@ export function createPlatformServer(orchestrator: Orchestrator, options: { webh
   });
 }
 
-async function storeFromEnvironment(): Promise<RunStore> {
-  if (!process.env.DATABASE_URL) return new JsonFileRunStore(process.env.ORQESTRA_DATA_PATH ?? ".data/runs.json");
+async function servicesFromEnvironment(): Promise<{ store: RunStore; queue: JobQueue }> {
+  if (!process.env.DATABASE_URL) return { store: new JsonFileRunStore(process.env.ORQESTRA_DATA_PATH ?? ".data/runs.json"), queue: new MemoryJobQueue() };
   const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 10 });
   await pool.query("SELECT 1");
-  return new PostgresRunStore(pool);
+  return { store: new PostgresRunStore(pool), queue: new PostgresJobQueue(pool) };
 }
 
 if (process.env.NODE_ENV !== "test") {
   const webhookSecret = process.env.GITHUB_WEBHOOK_SECRET;
   const operatorToken = process.env.OPERATOR_TOKEN;
   if (!webhookSecret || !operatorToken) throw new Error("GITHUB_WEBHOOK_SECRET and OPERATOR_TOKEN are required");
+  const services = await servicesFromEnvironment();
   const orchestrator = new Orchestrator(
     { async implement(item) { return { branch: `orqestra/${item.id}`, commit: "0000000", summary: "Agent adapter not configured" }; } },
     { async runTests() { return { passed: false, summary: "Sandbox adapter not configured" }; } },
     { async createDraft() { throw new Error("GitHub App adapter not configured"); } },
-    await storeFromEnvironment(),
+    services.store,
   );
   const port = Number(process.env.PORT ?? 8786);
-  createPlatformServer(orchestrator, { webhookSecret, operatorToken }).listen(port, () => console.log(`Orqestra platform listening on ${port}`));
+  createPlatformServer(orchestrator, { webhookSecret, operatorToken }, services.queue).listen(port, () => console.log(`Orqestra platform listening on ${port}`));
 }
