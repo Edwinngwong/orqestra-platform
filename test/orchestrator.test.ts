@@ -9,9 +9,10 @@ test("requires both human approvals before opening a draft PR", async () => {
     { async runTests() { return { passed: true, summary: "all passed" }; } },
     { async createDraft() { prCalls += 1; return "https://example.test/pr/1"; } },
   );
-  const run = service.intake({ id: "7", source: "github", title: "Change", description: "Do it", repository: "org/repo", defaultBranch: "main" });
+  const run = await service.intake({ id: "7", source: "github", title: "Change", description: "Do it", repository: "org/repo", defaultBranch: "main" });
+  assert(run);
   await assert.rejects(() => service.execute(run.id));
-  service.approveIntake(run.id);
+  await service.approveIntake(run.id);
   const tested = await service.execute(run.id);
   assert.equal(tested.status, "awaiting_pr_approval");
   assert.equal(prCalls, 0);
@@ -26,8 +27,9 @@ test("does not offer a PR when tests fail", async () => {
     { async runTests() { return { passed: false, summary: "1 failed" }; } },
     { async createDraft() { throw new Error("must not be called"); } },
   );
-  const run = service.intake({ id: "8", source: "jira", title: "Change", description: "Do it", repository: "org/repo", defaultBranch: "main" });
-  service.approveIntake(run.id);
+  const run = await service.intake({ id: "8", source: "jira", title: "Change", description: "Do it", repository: "org/repo", defaultBranch: "main" });
+  assert(run);
+  await service.approveIntake(run.id);
   assert.equal((await service.execute(run.id)).status, "tests_failed");
   await assert.rejects(() => service.approveDraftPullRequest(run.id));
 });

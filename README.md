@@ -19,6 +19,10 @@ npm run dev
 
 Set `GITHUB_WEBHOOK_SECRET` before starting. GitHub issue webhooks are accepted at `POST /webhooks/github`; valid newly opened issues create runs in `awaiting_intake_approval`. Local data defaults to `.data/runs.json` and can be moved with `ORQESTRA_DATA_PATH`.
 
+For PostgreSQL development, run `docker compose up -d`, set `DATABASE_URL` from `.env.example`, and run `npm run db:migrate`. When `DATABASE_URL` is absent, the service uses the local JSON store.
+
+Operator endpoints require `Authorization: Bearer $OPERATOR_TOKEN` and support reading a run or its audit history plus `approve-intake`, `execute`, and `approve-pr` actions under `/v1/runs/:id`.
+
 ## Next milestones
 
 1. Replace the local JSON store with Postgres using the `RunStore` contract.

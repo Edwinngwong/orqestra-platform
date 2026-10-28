@@ -6,7 +6,8 @@ const sandbox: Sandbox = { async runTests() { return { passed: true, summary: "1
 const prs: PullRequests = { async createDraft({ repository, branch }) { return `https://github.com/${repository}/pull/demo?head=${branch}`; } };
 
 const orchestrator = new Orchestrator(agent, sandbox, prs);
-const run = orchestrator.intake({ id: "ISSUE-42", source: "github", title: "Add health endpoint", description: "Return service status", repository: "acme/service", defaultBranch: "main" });
-orchestrator.approveIntake(run.id);
+const run = await orchestrator.intake({ id: "ISSUE-42", source: "github", title: "Add health endpoint", description: "Return service status", repository: "acme/service", defaultBranch: "main" });
+if (!run) throw new Error("Duplicate demo intake");
+await orchestrator.approveIntake(run.id);
 await orchestrator.execute(run.id);
 console.log(await orchestrator.approveDraftPullRequest(run.id));
