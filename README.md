@@ -25,6 +25,10 @@ Operator endpoints require `Authorization: Bearer $OPERATOR_TOKEN` and support r
 
 Intake approval enqueues an `execute_run` job. PostgreSQL workers lease jobs using `FOR UPDATE SKIP LOCKED`, renew leases with heartbeats, retry failures with bounded exponential backoff, and recover expired leases. Cancellation marks both the run and any pending or leased job as cancelled.
 
+Run the API with `npm run dev` and the durable worker separately with `npm run worker`. The worker exchanges a GitHub App JWT for a short-lived installation token, reads a bounded repository snapshot, asks the configured OpenAI Responses API model for schema-constrained file replacements, creates a GitHub branch and commit through the Git Data API, and submits that immutable commit to the sandbox. Only a signed passing sandbox result moves the run to PR approval.
+
+The model response is bounded to 20 files and 1 MB, rejects absolute/traversal paths, and cannot directly execute commands. Repository text is explicitly treated as untrusted prompt content. See `.env.example` for required runtime configuration.
+
 ## Next milestones
 
 1. Replace the local JSON store with Postgres using the `RunStore` contract.

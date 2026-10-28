@@ -1,6 +1,10 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Pool } from "pg";
+import { readFile } from "node:fs/promises";
+import { GitHubAppTokens, GitHubPullRequests } from "./adapters/github.js";
+import { OpenAIGitHubAgent } from "./adapters/openai-github-agent.js";
+import { SandboxHttpClient } from "./adapters/sandbox.js";
 import { githubIssueToWorkItem, verifyGitHubSignature } from "./github-webhook.js";
 import { Orchestrator } from "./orchestrator.js";
 import { PostgresRunStore } from "./postgres-store.js";
@@ -78,12 +82,15 @@ async function servicesFromEnvironment(): Promise<{ store: RunStore; queue: JobQ
 if (process.env.NODE_ENV !== "test") {
   const webhookSecret = process.env.GITHUB_WEBHOOK_SECRET;
   const operatorToken = process.env.OPERATOR_TOKEN;
-  if (!webhookSecret || !operatorToken) throw new Error("GITHUB_WEBHOOK_SECRET and OPERATOR_TOKEN are required");
+  const appId = process.env.GITHUB_APP_ID, keyPath = process.env.GITHUB_APP_PRIVATE_KEY_PATH, openaiKey = process.env.OPENAI_API_KEY, model = process.env.OPENAI_MODEL;
+  const sandboxUrl = process.env.SANDBOX_URL, sandboxToken = process.env.SANDBOX_TOKEN, signingSecret = process.env.RESULT_SIGNING_SECRET;
+  if (!webhookSecret || !operatorToken || !appId || !keyPath || !openaiKey || !model || !sandboxUrl || !sandboxToken || !signingSecret) throw new Error("Platform integration environment is incomplete; see .env.example");
   const services = await servicesFromEnvironment();
+  const tokens = new GitHubAppTokens(appId, await readFile(keyPath, "utf8"));
   const orchestrator = new Orchestrator(
-    { async implement(item) { return { branch: `orqestra/${item.id}`, commit: "0000000", summary: "Agent adapter not configured" }; } },
-    { async runTests() { return { passed: false, summary: "Sandbox adapter not configured" }; } },
-    { async createDraft() { throw new Error("GitHub App adapter not configured"); } },
+    new OpenAIGitHubAgent(tokens, openaiKey, model),
+    new SandboxHttpClient(sandboxUrl, sandboxToken, signingSecret),
+    new GitHubPullRequests(id => tokens.installationToken(id)),
     services.store,
   );
   const port = Number(process.env.PORT ?? 8786);
