@@ -12,6 +12,7 @@ interface GitHubIssuePayload {
   action?: string;
   issue?: { number?: number; title?: string; body?: string | null };
   repository?: { full_name?: string; default_branch?: string };
+  installation?: { id?: number };
 }
 
 export function githubIssueToWorkItem(payload: GitHubIssuePayload): WorkItem | undefined {
@@ -23,5 +24,6 @@ export function githubIssueToWorkItem(payload: GitHubIssuePayload): WorkItem | u
     description: payload.issue.body ?? "",
     repository: payload.repository.full_name,
     defaultBranch: payload.repository.default_branch ?? "main",
+    ...(payload.installation?.id ? { githubInstallationId: payload.installation.id } : {}),
   };
 }

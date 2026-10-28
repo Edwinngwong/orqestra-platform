@@ -1,0 +1,9 @@
+export const operatorHtml = `<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orqestra Operator</title><style>
+:root{color-scheme:dark;font:16px system-ui;background:#0b1020;color:#e8ecf5}body{max-width:900px;margin:40px auto;padding:0 20px}h1{letter-spacing:.04em}input,button{font:inherit;padding:10px 12px;border-radius:8px;border:1px solid #34405d;background:#141b2f;color:inherit}input{width:min(360px,90%)}button{cursor:pointer;margin:4px}pre{white-space:pre-wrap;background:#141b2f;padding:18px;border-radius:10px;min-height:180px}.row{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.muted{color:#99a4bd}</style>
+<h1>Orqestra Operator</h1><p class="muted">Human approval console. Tokens remain in this browser tab.</p>
+<div class="row"><input id="run" placeholder="Run ID"><input id="token" type="password" placeholder="Operator token"></div>
+<div class="row"><button data-action="load">Load</button><button data-action="audit">Audit</button><button data-action="approve-intake">Approve intake</button><button data-action="cancel">Cancel</button><button data-action="approve-pr">Approve draft PR</button></div>
+<pre id="output">Enter a run ID and token.</pre><script>
+const output=document.querySelector('#output');document.querySelectorAll('button').forEach(b=>b.onclick=async()=>{const id=document.querySelector('#run').value,token=document.querySelector('#token').value,a=b.dataset.action;const suffix=a==='load'?'':a==='audit'?'/audit':'/'+a;try{const r=await fetch('/v1/runs/'+encodeURIComponent(id)+suffix,{method:['load','audit'].includes(a)?'GET':'POST',headers:{authorization:'Bearer '+token,'x-orqestra-actor':'operator-ui'}});output.textContent=JSON.stringify(await r.json(),null,2)}catch(e){output.textContent=String(e)}})</script></html>`;

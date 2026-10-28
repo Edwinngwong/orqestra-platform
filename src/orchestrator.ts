@@ -56,6 +56,7 @@ export class Orchestrator {
       base: run.workItem.defaultBranch,
       title: run.workItem.title,
       body: `Automated change for ${run.workItem.source} item ${run.workItem.id}.\n\nTests: ${run.testSummary}`,
+      ...(run.workItem.githubInstallationId ? { installationId: run.workItem.githubInstallationId } : {}),
     });
     run.status = "draft_pr_open";
     await this.store.put(run);

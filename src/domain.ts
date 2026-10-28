@@ -15,6 +15,7 @@ export interface WorkItem {
   description: string;
   repository: string;
   defaultBranch: string;
+  githubInstallationId?: number;
 }
 
 export interface Run {
@@ -46,5 +47,5 @@ export interface Sandbox {
 }
 
 export interface PullRequests {
-  createDraft(input: { repository: string; branch: string; base: string; title: string; body: string }): Promise<string>;
+  createDraft(input: { repository: string; branch: string; base: string; title: string; body: string; installationId?: number }): Promise<string>;
 }

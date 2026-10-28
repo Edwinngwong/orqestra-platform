@@ -6,6 +6,7 @@ import { Orchestrator } from "./orchestrator.js";
 import { PostgresRunStore } from "./postgres-store.js";
 import { MemoryJobQueue, PostgresJobQueue, type JobQueue } from "./queue/jobs.js";
 import { JsonFileRunStore, type RunStore } from "./store.js";
+import { operatorHtml } from "./ui/operator.js";
 
 function authorized(request: IncomingMessage, token: string): boolean {
   const value = request.headers.authorization;
@@ -29,6 +30,7 @@ async function body(request: IncomingMessage): Promise<Buffer> {
 export function createPlatformServer(orchestrator: Orchestrator, options: { webhookSecret: string; operatorToken: string }, queue: JobQueue = new MemoryJobQueue()) {
   return createServer(async (request, response) => {
     try {
+      if (request.method === "GET" && request.url === "/") { response.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'", "x-content-type-options": "nosniff" }); response.end(operatorHtml); return; }
       if (request.method === "POST" && request.url === "/webhooks/github") {
         const raw = await body(request);
         const signature = request.headers["x-hub-signature-256"];
