@@ -2,6 +2,9 @@
 
 Control plane for the independent Orqestra AI SDLC MVP.
 
+Before contributing, read [`AGENTS.md`](AGENTS.md). It is the authoritative
+project-state and engineering guide, and every milestone commit must update it.
+
 ## First vertical slice
 
 `GitHub/Jira work item -> intake approval -> coding agent -> isolated tests -> PR approval -> draft PR`
