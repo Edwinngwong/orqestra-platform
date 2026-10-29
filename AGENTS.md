@@ -37,6 +37,7 @@ Current capabilities:
 - Explicit `@muse` intake only, deterministic model-output validation, clarification replies, and proposal links.
 - Revocable phone-to-user/workspace/project bindings that stop working when membership is removed.
 - Outbound WhatsApp Cloud API replies and dashboard binding controls with masked phone numbers.
+- Public privacy, terms, and data-deletion pages for Meta app publication, with a project-owned app icon.
 - One-command local start/status/stop with automatic Cloudflare quick-tunnel webhook updates.
 
 Known gaps before broad production use:

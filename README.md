@@ -42,6 +42,10 @@ work from WhatsApp.
 Proposal creation is idempotent per WhatsApp message and project, so a failed
 outbound confirmation can be retried without creating duplicate work.
 
+Meta publication documents are maintained in `docs/`: the public privacy policy,
+terms of service, data-deletion instructions, and app icon can be hosted using
+GitHub Pages from the `main` branch's `/docs` folder.
+
 Run `./scripts/configure-whatsapp-local.sh` to enter Meta's Phone Number ID, App
 Secret, and replacement access token without echoing secrets. The script creates
 a separate random webhook verification token in the ignored mode-0600
