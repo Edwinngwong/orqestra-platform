@@ -17,7 +17,8 @@
 3. Run `./scripts/configure-whatsapp-local.sh`. Enter the Phone Number ID, App Secret, and replacement access token only in the hidden terminal prompts.
 4. Restart with `./scripts/local-down.sh` followed by `./scripts/local-up.sh` and note the current public URL.
 5. In Meta WhatsApp configuration, set the callback to `<public-url>/webhooks/whatsapp`, copy `WHATSAPP_VERIFY_TOKEN` directly from `.env.local` into Meta, and subscribe to `messages`. Never paste the token into chat.
-6. Sign in as a workspace admin, use the WhatsApp Muse access panel to bind your own international-format number to a project, and send `@muse` followed by a concrete software request to the Meta test number.
+6. Publish the Meta app, then subscribe the app itself to the WhatsApp Business Account using `POST /<WABA_ID>/subscribed_apps` with `subscribed_fields=messages`. Enabling the `messages` field alone does not create this account-level subscription; verify it with `GET /<WABA_ID>/subscribed_apps`.
+7. Sign in as a workspace admin, use the WhatsApp Muse access panel to bind your own international-format number to a project, and send `@muse` followed by a concrete software request to the Meta test number. Bind the business phone-number ID from a verified inbound webhook, not a display number or WABA ID.
 7. Open the returned proposal link, confirm it in the dashboard, and continue through the existing intake and PR approvals.
 
 Meta's temporary token and Cloudflare quick-tunnel URL are for development only. Production requires a permanent domain, managed system-user token, business verification as applicable, secret rotation, rate limits, retention controls, monitoring, and a registered production number.
