@@ -64,15 +64,6 @@ for attempt in 1 2 3 4 5 6 7 8 9 10; do
   sleep 1
 done
 start sandbox-worker "$sandbox" env EXECUTOR_IMAGE="$executor_image" "$sandbox/node_modules/.bin/tsx" src/worker.ts
-start platform-api "$root" "$root/node_modules/.bin/tsx" src/server.ts
-start platform-worker "$root" "$root/node_modules/.bin/tsx" src/worker-main.ts
-
-for attempt in 1 2 3 4 5 6 7 8 9 10; do
-  curl -fsS http://127.0.0.1:${PORT:-8786}/ >/dev/null 2>&1 && break
-  [ "$attempt" -lt 10 ] || { echo "Platform API did not become ready" >&2; exit 1; }
-  sleep 1
-done
-
 start tunnel "$root" cloudflared tunnel --no-autoupdate --url "http://127.0.0.1:${PORT:-8786}"
 tunnel_url=
 for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
@@ -81,6 +72,16 @@ for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
   sleep 1
 done
 [ -n "$tunnel_url" ] || { echo "Tunnel URL was not created; see $logs/tunnel.log" >&2; exit 1; }
+export ORQESTRA_PUBLIC_URL="$tunnel_url"
+
+start platform-api "$root" "$root/node_modules/.bin/tsx" src/server.ts
+start platform-worker "$root" "$root/node_modules/.bin/tsx" src/worker-main.ts
+
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+  curl -fsS http://127.0.0.1:${PORT:-8786}/ >/dev/null 2>&1 && break
+  [ "$attempt" -lt 10 ] || { echo "Platform API did not become ready" >&2; exit 1; }
+  sleep 1
+done
 
 webhook_url="$tunnel_url/webhooks/github"
 "$root/node_modules/.bin/tsx" "$root/scripts/configure-github-webhook.ts" "$webhook_url"

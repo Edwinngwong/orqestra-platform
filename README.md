@@ -29,6 +29,24 @@ The dashboard includes a Muse proposal and confirmation panel. External channel
 adapters should call the same authenticated work-item API and preserve a unique
 source reference for replay protection.
 
+### WhatsApp development adapter
+
+The optional WhatsApp adapter receives Meta Cloud API callbacks at
+`/webhooks/whatsapp`. It verifies Meta's challenge and every payload signature,
+durably deduplicates message IDs, and ignores all conversation unless a text
+message begins with `@muse`. A bound sender is mapped to one Orqestra user,
+workspace, and default project. Muse either asks one clarification question or
+creates a proposal and returns its review link; it never confirms or executes
+work from WhatsApp.
+
+Run `./scripts/configure-whatsapp-local.sh` to enter Meta's Phone Number ID, App
+Secret, and replacement access token without echoing secrets. The script creates
+a separate random webhook verification token in the ignored mode-0600
+`.env.local`. Restart the complete local stack afterward. Local startup injects
+the current Cloudflare tunnel URL before the platform starts, so proposal links
+use the same public origin. Production must use a permanent HTTPS URL and a
+managed system-user token rather than Meta's temporary development token.
+
 ## Run
 
 For the complete local stack, including PostgreSQL, both workers, the sandbox,

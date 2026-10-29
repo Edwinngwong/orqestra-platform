@@ -20,3 +20,12 @@ test("Muse work items and project tracker routing are migrated", { skip: !proces
     assert.deepEqual(columns.rows.map(row => row.column_name), ["jira_project_key", "tracker_type"]);
   } finally { await pool.end(); }
 });
+
+test("WhatsApp bindings and durable inbox are migrated", { skip: !process.env.TEST_DATABASE_URL }, async () => {
+  const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  try {
+    const result = await pool.query("SELECT to_regclass('public.whatsapp_bindings') AS bindings,to_regclass('public.whatsapp_messages') AS messages");
+    assert.equal(result.rows[0].bindings, "whatsapp_bindings");
+    assert.equal(result.rows[0].messages, "whatsapp_messages");
+  } finally { await pool.end(); }
+});

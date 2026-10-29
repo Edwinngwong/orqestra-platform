@@ -21,6 +21,11 @@ GITHUB_APP_PRIVATE_KEY_PATH=
 OPENAI_API_KEY=
 OPENAI_MODEL=
 WORKER_ID=local-worker-1
+WHATSAPP_APP_SECRET=
+WHATSAPP_VERIFY_TOKEN=$(secret)
+WHATSAPP_ACCESS_TOKEN=
+WHATSAPP_PHONE_NUMBER_ID=
+WHATSAPP_GRAPH_VERSION=v25.0
 EOF
 chmod 600 "$target"
 echo "Created $target with local secrets. Add the provider values without committing this file."

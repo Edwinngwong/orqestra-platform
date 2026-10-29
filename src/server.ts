@@ -17,6 +17,9 @@ import { AuthService, type Principal, type WorkspaceRole } from "./auth.js";
 import { MemoryMuseStore, MuseService, PostgresMuseStore, type MuseStore } from "./muse.js";
 import { RoutedWorkTracker } from "./adapters/trackers.js";
 import type { IntakeChannel, TrackerKind } from "./domain.js";
+import { OpenAIMuseInterpreter } from "./adapters/openai-muse.js";
+import { WhatsAppCloudClient } from "./adapters/whatsapp.js";
+import { MemoryWhatsAppStore, PostgresWhatsAppStore, WhatsAppMuseService, type WhatsAppStore, verifyMetaChallenge, verifyMetaSignature } from "./whatsapp.js";
 
 function authorized(request: IncomingMessage, token: string): boolean {
   const value = request.headers.authorization;
@@ -42,10 +45,24 @@ function validRepository(value: string) { return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.
 
 const systemPrincipal: Principal = { userId: "system", email: "local-operator", mustChangePassword: false, system: true, roles: new Map() };
 
-export function createPlatformServer(orchestrator: Orchestrator, options: { webhookSecret: string; operatorToken: string }, queue: JobQueue = new MemoryJobQueue(), projects?: ProjectRegistry, github?: GitHubAppTokens, auth?: AuthService, muse?: MuseService) {
+export function createPlatformServer(orchestrator: Orchestrator, options: { webhookSecret: string; operatorToken: string; whatsappAppSecret?: string; whatsappVerifyToken?: string; whatsappPhoneNumberId?: string; publicBaseUrl?: string }, queue: JobQueue = new MemoryJobQueue(), projects?: ProjectRegistry, github?: GitHubAppTokens, auth?: AuthService, muse?: MuseService, whatsapp?: WhatsAppMuseService) {
   return createServer(async (request, response) => {
     try {
       if (request.method === "GET" && request.url === "/") { response.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'", "x-content-type-options": "nosniff" }); response.end(operatorHtml); return; }
+      if (request.url?.startsWith("/webhooks/whatsapp") && request.method === "GET") {
+        if (!whatsapp || !options.whatsappVerifyToken) return json(response, 404);
+        const challenge = verifyMetaChallenge(new URL(request.url, "http://local").searchParams, options.whatsappVerifyToken);
+        if (!challenge) return json(response, 403);
+        response.writeHead(200, { "content-type": "text/plain; charset=utf-8" }); response.end(challenge); return;
+      }
+      if (request.url === "/webhooks/whatsapp" && request.method === "POST") {
+        if (!whatsapp || !options.whatsappAppSecret || !options.publicBaseUrl) return json(response, 503);
+        const raw = await body(request);
+        const signature = request.headers["x-hub-signature-256"];
+        if (!verifyMetaSignature(raw, typeof signature === "string" ? signature : undefined, options.whatsappAppSecret)) return json(response, 401);
+        const accepted = (await whatsapp.receive(JSON.parse(raw.toString("utf8")), options.publicBaseUrl)).filter(Boolean).length;
+        return json(response, 200, { accepted });
+      }
       if (request.method === "POST" && request.url === "/webhooks/github") {
         const raw = await body(request);
         const signature = request.headers["x-hub-signature-256"];
@@ -134,6 +151,32 @@ export function createPlatformServer(orchestrator: Orchestrator, options: { webh
           return json(response, 200, await muse.confirm(item.id, principal.email, project));
         }
       }
+      if (request.url === "/v1/whatsapp/status" && request.method === "GET") return json(response, 200, { configured: Boolean(whatsapp) });
+      if (request.url?.startsWith("/v1/whatsapp/bindings") && whatsapp) {
+        if (!projects || !options.whatsappPhoneNumberId) return json(response, 501, { error: "WhatsApp binding is not configured" });
+        if (principal.system) return json(response, 400, { error: "Sign in as a workspace user to bind a WhatsApp number" });
+        if (request.method === "GET") {
+          const values = await whatsapp.listBindings();
+          return json(response, 200, values.filter(value => can(value.workspaceId, "admin")).map(value => ({ ...value, senderWaId: `••••${value.senderWaId.slice(-4)}` })));
+        }
+        if (request.method === "POST" && request.url === "/v1/whatsapp/bindings") {
+          const input = JSON.parse((await body(request)).toString("utf8")) as { workspaceId?: string; projectId?: string; senderPhone?: string };
+          const senderWaId = (input.senderPhone ?? "").replace(/\D/g, "");
+          if (!input.workspaceId || !input.projectId || !/^\d{7,20}$/.test(senderWaId)) return json(response, 400, { error: "Workspace, project, and E.164 phone number are required" });
+          if (!can(input.workspaceId, "admin")) return json(response, 403, { error: "Administrator role required" });
+          const project = (await projects.listProjects(input.workspaceId)).find(value => value.id === input.projectId);
+          if (!project) return json(response, 404, { error: "Project not found in workspace" });
+          const value = await whatsapp.createBinding({ workspaceId: input.workspaceId, projectId: project.id, requesterId: principal.userId, senderWaId, businessPhoneNumberId: options.whatsappPhoneNumberId });
+          return json(response, 201, { ...value, senderWaId: `••••${value.senderWaId.slice(-4)}` });
+        }
+        const revoke = request.url.match(/^\/v1\/whatsapp\/bindings\/([0-9a-f-]+)$/i);
+        if (request.method === "DELETE" && revoke) {
+          const binding = (await whatsapp.listBindings()).find(value => value.id === revoke[1]);
+          if (!binding) return json(response, 404, { error: "WhatsApp binding not found" });
+          if (!can(binding.workspaceId, "admin")) return json(response, 403, { error: "Administrator role required" });
+          await whatsapp.deactivateBinding(binding.id); return json(response, 204);
+        }
+      }
       if (request.url === "/v1/workspaces") {
         if (!projects) return json(response, 501, { error: "Workspace registry requires PostgreSQL" });
         if (request.method === "GET") { const values = await projects.listWorkspaces(); return json(response, 200, principal.system ? values : values.filter(value => principal.roles.has(value.id))); }
@@ -204,11 +247,11 @@ export function createPlatformServer(orchestrator: Orchestrator, options: { webh
   });
 }
 
-async function servicesFromEnvironment(): Promise<{ store: RunStore; queue: JobQueue; projects: ProjectRegistry; museStore: MuseStore; auth?: AuthService }> {
-  if (!process.env.DATABASE_URL) return { store: new JsonFileRunStore(process.env.ORQESTRA_DATA_PATH ?? ".data/runs.json"), queue: new MemoryJobQueue(), projects: new MemoryProjectRegistry(), museStore: new MemoryMuseStore() };
+async function servicesFromEnvironment(): Promise<{ store: RunStore; queue: JobQueue; projects: ProjectRegistry; museStore: MuseStore; whatsappStore: WhatsAppStore; auth?: AuthService }> {
+  if (!process.env.DATABASE_URL) return { store: new JsonFileRunStore(process.env.ORQESTRA_DATA_PATH ?? ".data/runs.json"), queue: new MemoryJobQueue(), projects: new MemoryProjectRegistry(), museStore: new MemoryMuseStore(), whatsappStore: new MemoryWhatsAppStore() };
   const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 10 });
   await pool.query("SELECT 1");
-  return { store: new PostgresRunStore(pool), queue: new PostgresJobQueue(pool), projects: new PostgresProjectRegistry(pool), museStore: new PostgresMuseStore(pool), auth: new AuthService(pool) };
+  return { store: new PostgresRunStore(pool), queue: new PostgresJobQueue(pool), projects: new PostgresProjectRegistry(pool), museStore: new PostgresMuseStore(pool), whatsappStore: new PostgresWhatsAppStore(pool), auth: new AuthService(pool) };
 }
 
 if (process.env.NODE_ENV !== "test") {
@@ -227,6 +270,10 @@ if (process.env.NODE_ENV !== "test") {
   );
   const jira = process.env.JIRA_BASE_URL && process.env.JIRA_EMAIL && process.env.JIRA_API_TOKEN ? { baseUrl: process.env.JIRA_BASE_URL, email: process.env.JIRA_EMAIL, apiToken: process.env.JIRA_API_TOKEN } : undefined;
   const muse = new MuseService(services.museStore, new RoutedWorkTracker(id => tokens.installationToken(id), jira), orchestrator);
+  const publicBaseUrl = process.env.WHATSAPP_PUBLIC_BASE_URL || process.env.ORQESTRA_PUBLIC_URL;
+  const whatsappReady = process.env.WHATSAPP_APP_SECRET && process.env.WHATSAPP_VERIFY_TOKEN && process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID && publicBaseUrl;
+  const whatsapp = whatsappReady ? new WhatsAppMuseService(services.whatsappStore, services.projects, muse, new OpenAIMuseInterpreter(openaiKey, model), new WhatsAppCloudClient(process.env.WHATSAPP_PHONE_NUMBER_ID!, process.env.WHATSAPP_ACCESS_TOKEN!, process.env.WHATSAPP_GRAPH_VERSION ?? "v25.0")) : undefined;
+  if (whatsapp) { await whatsapp.recover(); setInterval(() => whatsapp.processNext().catch(error => console.error("WhatsApp worker failed", error)), 2_000).unref(); }
   const port = Number(process.env.PORT ?? 8786);
-  createPlatformServer(orchestrator, { webhookSecret, operatorToken }, services.queue, services.projects, tokens, services.auth, muse).listen(port, () => console.log(`Orqestra platform listening on ${port}`));
+  createPlatformServer(orchestrator, { webhookSecret, operatorToken, ...(process.env.WHATSAPP_APP_SECRET ? { whatsappAppSecret: process.env.WHATSAPP_APP_SECRET } : {}), ...(process.env.WHATSAPP_VERIFY_TOKEN ? { whatsappVerifyToken: process.env.WHATSAPP_VERIFY_TOKEN } : {}), ...(process.env.WHATSAPP_PHONE_NUMBER_ID ? { whatsappPhoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID } : {}), ...(publicBaseUrl ? { publicBaseUrl } : {}) }, services.queue, services.projects, tokens, services.auth, muse, whatsapp).listen(port, () => console.log(`Orqestra platform listening on ${port}`));
 }

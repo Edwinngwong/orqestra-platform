@@ -4,15 +4,15 @@ This file is the authoritative starting point for humans and AI coding agents wo
 
 ## Product and clean-room boundary
 
-Orqestra is an independent, human-governed AI software-delivery product. It accepts work from GitHub issues (and later Jira), requires explicit human approval, creates bounded code changes, runs tests in an isolated execution plane, requires a second human approval, and opens a draft pull request. It never merges automatically.
+Orqestra is an independent, human-governed AI software-delivery product. Muse accepts proposals from authenticated web and signed messaging channels, optionally synchronizes them to GitHub Issues or Jira, and hands confirmed work to Orqestra. Orqestra requires explicit human approval, creates bounded code changes, runs tests in an isolated execution plane, requires a second human approval, and opens a draft pull request. It never merges automatically.
 
 Do not use, request, reproduce, translate, or derive from any employer-proprietary source code, architecture, documentation, prompts, customer data, credentials, or internal product knowledge. Implement from public documentation, first principles, and code already committed to the Orqestra repositories.
 
 ## Current milestone
 
-- Milestone: Muse core and customer-selectable tracker routing
-- Platform version: 0.6.0
-- Latest migration: 006_muse_tracker_routing.sql
+- Milestone: Signed WhatsApp Muse development adapter
+- Platform version: 0.7.0
+- Latest migration: 007_whatsapp_muse.sql
 - Compatible sandbox version: 0.2.x
 - Milestone status: complete and live-tested locally
 
@@ -32,13 +32,19 @@ Current capabilities:
 - Channel-independent Muse proposals with explicit reviewer confirmation and durable provenance.
 - Per-project routing to GitHub Issues, Jira, or Orqestra-only tracking while keeping the code host independent.
 - Dashboard support for tracker selection, Muse proposal review, confirmation, and external ticket links.
+- Meta webhook verification and constant-time `X-Hub-Signature-256` validation.
+- Durable, replay-protected WhatsApp inbox with bounded retries and restart recovery.
+- Explicit `@muse` intake only, deterministic model-output validation, clarification replies, and proposal links.
+- Revocable phone-to-user/workspace/project bindings that stop working when membership is removed.
+- Outbound WhatsApp Cloud API replies and dashboard binding controls with masked phone numbers.
 - One-command local start/status/stop with automatic Cloudflare quick-tunnel webhook updates.
 
 Known gaps before broad production use:
 
 - OIDC/SSO, verified email invitations, account recovery, login rate limiting, and mandatory HTTPS.
 - Inline diff review, usage metering, budgets, and customer billing.
-- Signed WhatsApp, Slack, Teams, and email channel adapters; Muse currently accepts authenticated dashboard/API intake.
+- Slack, Teams, and email channel adapters.
+- Production WhatsApp system-user token lifecycle, business verification, permanent HTTPS hosting, rate limits, retention controls, and operational alerting.
 - Jira OAuth/installation management; the current Jira adapter uses runtime-held service credentials.
 - Azure DevOps/GitLab code-host integrations.
 - Cloud-native ephemeral execution; the current Docker executor is local-development only.
@@ -66,6 +72,9 @@ It does not execute untrusted repository commands. That belongs to `orqestra-san
 - `src/projects.ts`: workspace/project registry.
 - `src/muse.ts`: canonical proposal persistence, confirmation, tracker routing, and run creation.
 - `src/adapters/trackers.ts`: GitHub Issue, Jira, and Orqestra-only tracker adapters.
+- `src/whatsapp.ts`: signed webhook intake, durable message queue, authorization bindings, and Muse processing.
+- `src/adapters/openai-muse.ts`: bounded natural-language proposal interpretation.
+- `src/adapters/whatsapp.ts`: outbound WhatsApp Cloud API messages.
 - `src/postgres-store.ts`: durable run and audit persistence.
 - `src/queue/`: durable background jobs and worker leases.
 - `src/adapters/github.ts`: GitHub App tokens, discovery, and draft PRs.
@@ -86,6 +95,9 @@ It does not execute untrusted repository commands. That belongs to `orqestra-san
 - Preserve protected-path, file-count, byte-count, timeout, and command-policy enforcement.
 - Only signed passing sandbox results may reach `awaiting_pr_approval`.
 - Enforce workspace authorization on the server, not only by hiding UI controls.
+- Ignore ordinary WhatsApp conversation; only explicit `@muse` messages enter the durable inbox.
+- Never process a WhatsApp sender without an active binding and current workspace membership.
+- A WhatsApp message may create only a proposal; it cannot confirm, approve intake, approve a PR, or merge.
 - Use constant-time comparisons for secrets where applicable.
 - Migrations are forward-only and must preserve existing data. Add a new numbered migration; do not rewrite an applied migration to change live state.
 - Keep `.env.local`, `.local/`, keys, tokens, and generated runtime data untracked.
