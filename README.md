@@ -10,6 +10,24 @@ The current scaffold implements the orchestration state machine, durable local r
 
 ## Run
 
+For the complete local stack, including PostgreSQL, both workers, the sandbox,
+Cloudflare Tunnel, and automatic GitHub webhook configuration:
+
+```sh
+./scripts/local-up.sh
+./scripts/local-status.sh
+./scripts/local-down.sh
+```
+
+`local-up.sh` uses `.env.local`, keeps runtime state and logs under the ignored
+`.local/` directory, and refuses to start if required credentials are missing.
+The tunnel URL is temporary, but the GitHub App is updated automatically on
+every start. Keep the startup terminal open; pressing Ctrl+C, or running
+`local-down.sh` from another terminal, stops the processes and PostgreSQL
+container while preserving database data.
+
+For individual development commands:
+
 ```sh
 npm install
 npm test
