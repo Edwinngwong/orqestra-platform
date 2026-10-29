@@ -13,6 +13,7 @@ import { JsonFileRunStore, type RunStore } from "./store.js";
 import { operatorHtml } from "./ui/operator.js";
 import { MemoryProjectRegistry, PostgresProjectRegistry, type ProjectRegistry } from "./projects.js";
 import type { ProjectPolicy } from "./domain.js";
+import { AuthService, type Principal, type WorkspaceRole } from "./auth.js";
 
 function authorized(request: IncomingMessage, token: string): boolean {
   const value = request.headers.authorization;
@@ -22,8 +23,8 @@ function authorized(request: IncomingMessage, token: string): boolean {
   return timingSafeEqual(expected, received);
 }
 
-function json(response: ServerResponse, status: number, value?: unknown) {
-  response.writeHead(status, value === undefined ? undefined : { "content-type": "application/json" });
+function json(response: ServerResponse, status: number, value?: unknown, headers: Record<string, string> = {}) {
+  response.writeHead(status, value === undefined ? headers : { "content-type": "application/json", ...headers });
   response.end(value === undefined ? undefined : JSON.stringify(value));
 }
 
@@ -36,7 +37,9 @@ async function body(request: IncomingMessage): Promise<Buffer> {
 const defaultPolicy: ProjectPolicy = { testCommand: ["npm", "test"], timeoutSeconds: 900, maxChangedFiles: 20, maxChangedBytes: 1_000_000, protectedPaths: [".github/workflows", ".env", "infra"] };
 function validRepository(value: string) { return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value); }
 
-export function createPlatformServer(orchestrator: Orchestrator, options: { webhookSecret: string; operatorToken: string }, queue: JobQueue = new MemoryJobQueue(), projects?: ProjectRegistry, github?: GitHubAppTokens) {
+const systemPrincipal: Principal = { userId: "system", email: "local-operator", mustChangePassword: false, system: true, roles: new Map() };
+
+export function createPlatformServer(orchestrator: Orchestrator, options: { webhookSecret: string; operatorToken: string }, queue: JobQueue = new MemoryJobQueue(), projects?: ProjectRegistry, github?: GitHubAppTokens, auth?: AuthService) {
   return createServer(async (request, response) => {
     try {
       if (request.method === "GET" && request.url === "/") { response.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'", "x-content-type-options": "nosniff" }); response.end(operatorHtml); return; }
@@ -65,35 +68,75 @@ export function createPlatformServer(orchestrator: Orchestrator, options: { webh
         return run ? json(response, 201, { runId: run.id, status: run.status }) : json(response, 202, { duplicate: true });
       }
 
+      if (request.url === "/v1/auth/login" && request.method === "POST") {
+        if (!auth) return json(response, 501, { error: "Session authentication requires PostgreSQL" });
+        const input = JSON.parse((await body(request)).toString("utf8")) as { email?: string; password?: string };
+        if (!input.email || !input.password) return json(response, 400, { error: "Email and password are required" });
+        const result = await auth.login(input.email, input.password);
+        const secure = request.headers["x-forwarded-proto"] === "https" ? "; Secure" : "";
+        return json(response, 200, { csrfToken: result.csrfToken, user: result.user }, { "set-cookie": result.cookie + secure });
+      }
+
+      const principal = auth ? await auth.authenticate(request, options.operatorToken) : (authorized(request, options.operatorToken) ? systemPrincipal : undefined);
+      if (request.url?.startsWith("/v1/") && !principal) return json(response, 401, { error: "Authentication required" });
+      if (!principal) return json(response, 404);
+      if (principal.mustChangePassword && request.url !== "/v1/auth/change-password" && request.url !== "/v1/auth/me" && request.url !== "/v1/auth/logout") return json(response, 403, { error: "Password change required" });
+      const stateChanging = ["POST", "PUT", "PATCH", "DELETE"].includes(request.method ?? "");
+      if (stateChanging && auth && !auth.validateCsrf(request, principal)) return json(response, 403, { error: "Invalid CSRF token" });
+      const can = (workspaceId: string | undefined, role: WorkspaceRole) => principal.system || (!!auth && auth.can(principal, workspaceId, role));
+      if (request.url === "/v1/auth/me" && request.method === "GET") return json(response, 200, { id: principal.userId, email: principal.email, mustChangePassword: principal.mustChangePassword, system: principal.system, roles: [...principal.roles].map(([workspaceId, role]) => ({ workspaceId, role })) });
+      if (request.url === "/v1/auth/logout" && request.method === "POST") { if (auth) await auth.logout(principal); return json(response, 204, undefined, { "set-cookie": "orqestra_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0" }); }
+      if (request.url === "/v1/auth/change-password" && request.method === "POST") {
+        if (!auth || principal.system) return json(response, 400, { error: "Password change is unavailable for the bootstrap operator" });
+        const input = JSON.parse((await body(request)).toString("utf8")) as { currentPassword?: string; newPassword?: string };
+        if (!input.currentPassword || !input.newPassword) return json(response, 400, { error: "Current and new passwords are required" });
+        await auth.changePassword(principal, input.currentPassword, input.newPassword);
+        return json(response, 200, { changed: true });
+      }
+
       if (request.url === "/v1/runs" && request.method === "GET") {
-        if (!authorized(request, options.operatorToken)) return json(response, 401);
-        return json(response, 200, await orchestrator.list());
+        const runs = await orchestrator.list();
+        return json(response, 200, principal.system ? runs : runs.filter(run => can(run.workItem.workspaceId, "viewer")));
       }
       if (request.url === "/v1/github/repositories" && request.method === "GET") {
-        if (!authorized(request, options.operatorToken)) return json(response, 401);
+        if (!principal.system && ![...principal.roles.values()].some(role => ["owner", "admin"].includes(role))) return json(response, 403, { error: "Administrator role required" });
         if (!github) return json(response, 501, { error: "GitHub App discovery is unavailable" });
         return json(response, 200, await github.repositories());
       }
       if (request.url === "/v1/workspaces") {
-        if (!authorized(request, options.operatorToken)) return json(response, 401);
         if (!projects) return json(response, 501, { error: "Workspace registry requires PostgreSQL" });
-        if (request.method === "GET") return json(response, 200, await projects.listWorkspaces());
+        if (request.method === "GET") { const values = await projects.listWorkspaces(); return json(response, 200, principal.system ? values : values.filter(value => principal.roles.has(value.id))); }
         if (request.method === "POST") {
           const input = JSON.parse((await body(request)).toString("utf8")) as { name?: string; slug?: string };
           if (!input.name?.trim() || !input.slug || !/^[a-z0-9][a-z0-9-]{1,62}$/.test(input.slug)) return json(response, 400, { error: "Valid workspace name and slug are required" });
-          return json(response, 201, await projects.createWorkspace({ name: input.name.trim(), slug: input.slug }));
+          const workspace = await projects.createWorkspace({ name: input.name.trim(), slug: input.slug });
+          if (auth && !principal.system) await auth.upsertMembership(workspace.id, principal.userId, "owner");
+          return json(response, 201, workspace);
+        }
+      }
+      const membersMatch = request.url?.match(/^\/v1\/workspaces\/([0-9a-f-]+)\/members$/i);
+      if (membersMatch) {
+        const workspaceId = membersMatch[1]!;
+        if (!auth || !can(workspaceId, "admin")) return json(response, 403, { error: "Administrator role required" });
+        if (request.method === "GET") return json(response, 200, await auth.listMembers(workspaceId));
+        if (request.method === "POST") {
+          const input = JSON.parse((await body(request)).toString("utf8")) as { email?: string; role?: WorkspaceRole };
+          if (!input.email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(input.email) || !input.role || !["owner", "admin", "reviewer", "viewer"].includes(input.role)) return json(response, 400, { error: "Valid email and role are required" });
+          if (input.role === "owner" && !can(workspaceId, "owner")) return json(response, 403, { error: "Only an owner can grant owner access" });
+          return json(response, 201, await auth.invite(workspaceId, input.email, input.role));
         }
       }
       if (request.url?.startsWith("/v1/projects")) {
-        if (!authorized(request, options.operatorToken)) return json(response, 401);
         if (!projects) return json(response, 501, { error: "Project registry requires PostgreSQL" });
         if (request.method === "GET") {
           const workspaceId = new URL(request.url, "http://local").searchParams.get("workspaceId") ?? undefined;
-          return json(response, 200, await projects.listProjects(workspaceId));
+          const values = await projects.listProjects(workspaceId);
+          return json(response, 200, principal.system ? values : values.filter(value => can(value.workspaceId, "viewer")));
         }
         if (request.method === "POST" && request.url === "/v1/projects") {
           const input = JSON.parse((await body(request)).toString("utf8")) as { workspaceId?: string; name?: string; repository?: string; defaultBranch?: string; githubInstallationId?: number; policy?: Partial<ProjectPolicy> };
           if (!input.workspaceId || !input.name?.trim() || !input.repository || !validRepository(input.repository) || !Number.isSafeInteger(input.githubInstallationId) || Number(input.githubInstallationId) <= 0) return json(response, 400, { error: "Workspace, name, owner/repository, and GitHub installation ID are required" });
+          if (!can(input.workspaceId, "admin")) return json(response, 403, { error: "Administrator role required" });
           const policy = { ...defaultPolicy, ...input.policy };
           if (!Array.isArray(policy.testCommand) || policy.testCommand.length < 1 || policy.timeoutSeconds < 1 || policy.timeoutSeconds > 1800 || policy.maxChangedFiles < 1 || policy.maxChangedFiles > 100 || policy.maxChangedBytes < 1 || policy.maxChangedBytes > 5_000_000 || !Array.isArray(policy.protectedPaths)) return json(response, 400, { error: "Invalid project policy" });
           return json(response, 201, await projects.createProject({ workspaceId: input.workspaceId, name: input.name.trim(), repository: input.repository, defaultBranch: input.defaultBranch?.trim() || "main", githubInstallationId: Number(input.githubInstallationId), policy }));
@@ -101,14 +144,16 @@ export function createPlatformServer(orchestrator: Orchestrator, options: { webh
       }
 
       const match = request.url?.match(/^\/v1\/runs\/([0-9a-f-]+)(?:\/(audit|approve-intake|execute|approve-pr|retry|cancel))?$/i);
-      if (!match || !authorized(request, options.operatorToken)) return json(response, match ? 401 : 404);
+      if (!match) return json(response, 404);
       const runId = match[1]!;
       const action = match[2];
-      const actor = request.headers["x-orqestra-actor"];
-      const human = typeof actor === "string" && actor.length <= 200 ? actor : "operator";
+      const targetRun = await orchestrator.get(runId);
+      if (!can(targetRun.workItem.workspaceId, "viewer")) return json(response, 403, { error: "Workspace access denied" });
+      const human = principal.email;
 
-      if (request.method === "GET" && !action) return json(response, 200, await orchestrator.get(runId));
+      if (request.method === "GET" && !action) return json(response, 200, targetRun);
       if (request.method === "GET" && action === "audit") return json(response, 200, await orchestrator.audit(runId));
+      if (request.method === "POST" && !can(targetRun.workItem.workspaceId, "reviewer")) return json(response, 403, { error: "Reviewer role required" });
       if (request.method === "POST" && action === "approve-intake") {
         const run = await orchestrator.approveIntake(runId, human);
         await queue.enqueue(runId);
@@ -126,11 +171,11 @@ export function createPlatformServer(orchestrator: Orchestrator, options: { webh
   });
 }
 
-async function servicesFromEnvironment(): Promise<{ store: RunStore; queue: JobQueue; projects: ProjectRegistry }> {
+async function servicesFromEnvironment(): Promise<{ store: RunStore; queue: JobQueue; projects: ProjectRegistry; auth?: AuthService }> {
   if (!process.env.DATABASE_URL) return { store: new JsonFileRunStore(process.env.ORQESTRA_DATA_PATH ?? ".data/runs.json"), queue: new MemoryJobQueue(), projects: new MemoryProjectRegistry() };
   const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 10 });
   await pool.query("SELECT 1");
-  return { store: new PostgresRunStore(pool), queue: new PostgresJobQueue(pool), projects: new PostgresProjectRegistry(pool) };
+  return { store: new PostgresRunStore(pool), queue: new PostgresJobQueue(pool), projects: new PostgresProjectRegistry(pool), auth: new AuthService(pool) };
 }
 
 if (process.env.NODE_ENV !== "test") {
@@ -148,5 +193,5 @@ if (process.env.NODE_ENV !== "test") {
     services.store,
   );
   const port = Number(process.env.PORT ?? 8786);
-  createPlatformServer(orchestrator, { webhookSecret, operatorToken }, services.queue, services.projects, tokens).listen(port, () => console.log(`Orqestra platform listening on ${port}`));
+  createPlatformServer(orchestrator, { webhookSecret, operatorToken }, services.queue, services.projects, tokens, services.auth).listen(port, () => console.log(`Orqestra platform listening on ${port}`));
 }

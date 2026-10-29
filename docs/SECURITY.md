@@ -8,6 +8,7 @@ Required controls before production use:
 - Explicit workspace/project registration before webhook intake; GitHub App discovery never exposes installation tokens to the browser.
 - Per-project test commands, timeouts, changed-file/byte limits, and protected-path enforcement.
 - Authenticated operator endpoints with organization authorization and CSRF protection.
+- Salted scrypt password hashes, short-lived opaque HttpOnly sessions, SameSite cookies, CSRF validation, forced temporary-password replacement, and server-side workspace role checks.
 - Immutable audit events for every approval, credential grant, execution, cancellation, and PR action.
 - Webhook replay protection and delivery-id idempotency in the same database transaction as intake.
 - No secrets in prompts, logs, git commits, test artifacts, or agent-readable environment variables unless explicitly run-scoped.
@@ -15,6 +16,6 @@ Required controls before production use:
 - Rate limits, quotas, timeouts, cancellation, artifact retention, log redaction, and emergency disable switches.
 - Dependency scanning, secret scanning, signed builds, pinned deploy artifacts, and protected default branches.
 
-The local operator token is not multi-tenant authentication. Do not expose the local dashboard to customers until workspace-scoped identity and roles are implemented.
+The local operator token bypasses workspace roles and exists only for emergency/bootstrap access. Never distribute it to customers. Password authentication and roles are suitable for local pilots; add OIDC/SSO, verified email invitations, rate limiting, account lockout, password recovery, and mandatory HTTPS before broad production use.
 
 The current code is an implementation scaffold, not a production security boundary.

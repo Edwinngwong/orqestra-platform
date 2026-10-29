@@ -53,13 +53,26 @@ For a live acceptance run, follow [the live setup checklist](docs/LIVE_SETUP.md)
 
 The operator dashboard at `http://127.0.0.1:8786/` lists delivery runs and their audit history. A workspace represents a company or team. A project binds one GitHub repository and installation to a policy containing its test command, timeout, change-size limits, and protected paths.
 
-Only repositories explicitly registered as projects can create runs. The dashboard discovers repositories already authorized through the GitHub App, so operators never enter installation tokens or private keys. The local operator token is a single-administrator development mechanism; customer authentication and workspace-scoped authorization are required before external production use.
+Only repositories explicitly registered as projects can create runs. The dashboard discovers repositories already authorized through the GitHub App, so operators never enter installation tokens or private keys.
+
+## Authentication and roles
+
+Dashboard users sign in with an email and password. Passwords are salted and hashed with scrypt. Successful login creates a 12-hour opaque HttpOnly, SameSite=Strict session and a separate CSRF token for state-changing requests. Temporary passwords must be changed before workspace data can be accessed.
+
+Workspace roles are enforced by the API:
+
+- `owner`: manage members, including other owners; configure projects; review and approve runs.
+- `admin`: manage non-owner members and projects; review and approve runs.
+- `reviewer`: inspect, approve, retry, and cancel runs.
+- `viewer`: read projects, runs, audit trails, and PR links.
+
+After migrations, bootstrap the first local owner with `npm run auth:bootstrap -- owner@example.com`. The command returns a one-time password. The `OPERATOR_TOKEN` remains a local emergency/bootstrap credential and is not used by the normal dashboard.
 
 ## Next milestones
 
-1. Add user authentication and workspace-scoped roles.
-2. Add an inline diff viewer and cost/usage accounting.
-3. Add Jira intake behind the same `WorkItem` contract.
-4. Replace the local executor with one ephemeral cloud task per run for production.
+1. Add an inline diff viewer and cost/usage accounting.
+2. Add Jira intake behind the same `WorkItem` contract.
+3. Replace the local executor with one ephemeral cloud task per run for production.
+4. Add OIDC/SSO and email-based invitations before broad customer rollout.
 
 See [the implementation plan](docs/IMPLEMENTATION_PLAN.md) and [security baseline](docs/SECURITY.md) before extending the scaffold. Copy `.env.example` to `.env` for local development; never commit the resulting file.
