@@ -10,9 +10,9 @@ Do not use, request, reproduce, translate, or derive from any employer-proprieta
 
 ## Current milestone
 
-- Milestone: Authenticated local commercial MVP
-- Platform version: 0.5.0
-- Latest migration: 005_backfill_run_scope.sql
+- Milestone: Muse core and customer-selectable tracker routing
+- Platform version: 0.6.0
+- Latest migration: 006_muse_tracker_routing.sql
 - Compatible sandbox version: 0.2.x
 - Milestone status: complete and live-tested locally
 
@@ -29,13 +29,18 @@ Current capabilities:
 - Email/password users with salted scrypt hashes, forced temporary-password replacement, opaque HttpOnly sessions, CSRF protection, and workspace roles.
 - Owner, admin, reviewer, and viewer authorization enforced by the API.
 - Local operator dashboard for onboarding, runs, audits, approvals, retries, cancellation, members, and PR links.
+- Channel-independent Muse proposals with explicit reviewer confirmation and durable provenance.
+- Per-project routing to GitHub Issues, Jira, or Orqestra-only tracking while keeping the code host independent.
+- Dashboard support for tracker selection, Muse proposal review, confirmation, and external ticket links.
 - One-command local start/status/stop with automatic Cloudflare quick-tunnel webhook updates.
 
 Known gaps before broad production use:
 
 - OIDC/SSO, verified email invitations, account recovery, login rate limiting, and mandatory HTTPS.
 - Inline diff review, usage metering, budgets, and customer billing.
-- Jira intake and Azure DevOps/GitLab integrations.
+- Signed WhatsApp, Slack, Teams, and email channel adapters; Muse currently accepts authenticated dashboard/API intake.
+- Jira OAuth/installation management; the current Jira adapter uses runtime-held service credentials.
+- Azure DevOps/GitLab code-host integrations.
 - Cloud-native ephemeral execution; the current Docker executor is local-development only.
 - Production deployment, observability, backups, disaster recovery, retention, and incident controls.
 
@@ -59,6 +64,8 @@ It does not execute untrusted repository commands. That belongs to `orqestra-san
 - `src/orchestrator.ts`: run state machine and approval invariants.
 - `src/auth.ts`: password hashing, sessions, CSRF, and workspace roles.
 - `src/projects.ts`: workspace/project registry.
+- `src/muse.ts`: canonical proposal persistence, confirmation, tracker routing, and run creation.
+- `src/adapters/trackers.ts`: GitHub Issue, Jira, and Orqestra-only tracker adapters.
 - `src/postgres-store.ts`: durable run and audit persistence.
 - `src/queue/`: durable background jobs and worker leases.
 - `src/adapters/github.ts`: GitHub App tokens, discovery, and draft PRs.

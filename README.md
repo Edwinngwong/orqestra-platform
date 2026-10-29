@@ -11,6 +11,24 @@ project-state and engineering guide, and every milestone commit must update it.
 
 The current MVP implements the orchestration state machine, durable PostgreSQL run and audit storage, verified GitHub webhooks, workspace/project onboarding, repository-specific execution policies, GitHub App repository discovery, and a human approval dashboard. It intentionally cannot merge a PR. Human approvals are explicit, audited domain transitions rather than UI-only checks.
 
+## Muse intake and tracker routing
+
+Muse is the channel-independent intake layer. Requests from the web dashboard—and
+later WhatsApp, Slack, Teams, email, GitHub, or Jira adapters—become canonical
+proposals. A reviewer must confirm a proposal before Muse creates the project's
+configured tracker item and an Orqestra run awaiting the existing intake
+approval. Ordinary channel messages never execute work directly.
+
+Each project selects `github_issue`, `jira_issue`, or `orqestra_only` during
+onboarding. GitHub issues use the project's GitHub App installation. Jira stores
+only the project key; API credentials remain in the runtime environment through
+`JIRA_BASE_URL`, `JIRA_EMAIL`, and `JIRA_API_TOKEN`. Tracker choice and code host
+are independent, so a Jira ticket can drive changes in a GitHub repository.
+
+The dashboard includes a Muse proposal and confirmation panel. External channel
+adapters should call the same authenticated work-item API and preserve a unique
+source reference for replay protection.
+
 ## Run
 
 For the complete local stack, including PostgreSQL, both workers, the sandbox,

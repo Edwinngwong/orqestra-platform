@@ -1,4 +1,6 @@
-export type WorkSource = "github" | "jira";
+export type WorkSource = "github" | "jira" | "muse";
+export type IntakeChannel = "web" | "whatsapp" | "slack" | "teams" | "email" | "github" | "jira";
+export type TrackerKind = "github_issue" | "jira_issue" | "orqestra_only";
 export type RunStatus =
   | "awaiting_intake_approval"
   | "queued"
@@ -39,7 +41,15 @@ export interface Workspace { id: string; name: string; slug: string; createdAt: 
 export interface ProjectPolicy { testCommand: string[]; timeoutSeconds: number; maxChangedFiles: number; maxChangedBytes: number; protectedPaths: string[] }
 export interface Project {
   id: string; workspaceId: string; name: string; repository: string; defaultBranch: string;
-  githubInstallationId: number; policy: ProjectPolicy; createdAt: string; updatedAt: string;
+  githubInstallationId: number; policy: ProjectPolicy; tracker: TrackerKind; jiraProjectKey?: string; createdAt: string; updatedAt: string;
+}
+
+export type MuseWorkItemStatus = "proposed" | "confirmed" | "routed";
+export interface MuseWorkItem {
+  id: string; workspaceId: string; projectId: string; channel: IntakeChannel; sourceReference: string;
+  requesterId: string; title: string; objective: string; acceptanceCriteria: string[]; constraints: string[];
+  status: MuseWorkItemStatus; confirmedBy?: string; confirmedAt?: string; tracker: TrackerKind;
+  externalId?: string; externalUrl?: string; runId?: string; createdAt: string; updatedAt: string;
 }
 
 export interface AgentResult {

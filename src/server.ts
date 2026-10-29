@@ -14,6 +14,9 @@ import { operatorHtml } from "./ui/operator.js";
 import { MemoryProjectRegistry, PostgresProjectRegistry, type ProjectRegistry } from "./projects.js";
 import type { ProjectPolicy } from "./domain.js";
 import { AuthService, type Principal, type WorkspaceRole } from "./auth.js";
+import { MemoryMuseStore, MuseService, PostgresMuseStore, type MuseStore } from "./muse.js";
+import { RoutedWorkTracker } from "./adapters/trackers.js";
+import type { IntakeChannel, TrackerKind } from "./domain.js";
 
 function authorized(request: IncomingMessage, token: string): boolean {
   const value = request.headers.authorization;
@@ -39,7 +42,7 @@ function validRepository(value: string) { return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.
 
 const systemPrincipal: Principal = { userId: "system", email: "local-operator", mustChangePassword: false, system: true, roles: new Map() };
 
-export function createPlatformServer(orchestrator: Orchestrator, options: { webhookSecret: string; operatorToken: string }, queue: JobQueue = new MemoryJobQueue(), projects?: ProjectRegistry, github?: GitHubAppTokens, auth?: AuthService) {
+export function createPlatformServer(orchestrator: Orchestrator, options: { webhookSecret: string; operatorToken: string }, queue: JobQueue = new MemoryJobQueue(), projects?: ProjectRegistry, github?: GitHubAppTokens, auth?: AuthService, muse?: MuseService) {
   return createServer(async (request, response) => {
     try {
       if (request.method === "GET" && request.url === "/") { response.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'", "x-content-type-options": "nosniff" }); response.end(operatorHtml); return; }
@@ -49,7 +52,9 @@ export function createPlatformServer(orchestrator: Orchestrator, options: { webh
         const event = request.headers["x-github-event"];
         const deliveryId = request.headers["x-github-delivery"];
         if (event !== "issues" || typeof deliveryId !== "string" || !verifyGitHubSignature(raw, typeof signature === "string" ? signature : undefined, options.webhookSecret)) return json(response, 401);
-        const item = githubIssueToWorkItem(JSON.parse(raw.toString("utf8")));
+        const payload = JSON.parse(raw.toString("utf8")) as { issue?: { body?: string } };
+        if (payload.issue?.body?.includes("<!-- orqestra-muse:")) return json(response, 202, { museManaged: true });
+        const item = githubIssueToWorkItem(payload);
         if (!item) return json(response, 202);
         if (projects) {
           const project = await projects.findByRepository(item.repository);
@@ -103,6 +108,32 @@ export function createPlatformServer(orchestrator: Orchestrator, options: { webh
         if (!github) return json(response, 501, { error: "GitHub App discovery is unavailable" });
         return json(response, 200, await github.repositories());
       }
+      if (request.url?.startsWith("/v1/muse/work-items") && muse) {
+        if (!projects) return json(response, 501, { error: "Muse requires the project registry" });
+        if (request.method === "GET" && request.url.startsWith("/v1/muse/work-items")) {
+          const workspaceId = new URL(request.url, "http://local").searchParams.get("workspaceId") ?? undefined;
+          const values = await muse.list(workspaceId);
+          return json(response, 200, principal.system ? values : values.filter(value => can(value.workspaceId, "viewer")));
+        }
+        if (request.method === "POST" && request.url === "/v1/muse/work-items") {
+          const input = JSON.parse((await body(request)).toString("utf8")) as { workspaceId?: string; projectId?: string; channel?: IntakeChannel; sourceReference?: string; title?: string; objective?: string; acceptanceCriteria?: string[]; constraints?: string[] };
+          const channels: IntakeChannel[] = ["web", "whatsapp", "slack", "teams", "email", "github", "jira"];
+          if (!input.workspaceId || !input.projectId || !input.channel || !channels.includes(input.channel) || !input.sourceReference?.trim() || input.sourceReference.length > 500 || !input.title?.trim() || input.title.length > 200 || !input.objective?.trim() || input.objective.length > 10_000 || !Array.isArray(input.acceptanceCriteria) || input.acceptanceCriteria.length < 1 || input.acceptanceCriteria.length > 20 || !input.acceptanceCriteria.every(value => typeof value === "string" && !!value.trim() && value.length <= 1_000) || !Array.isArray(input.constraints) || input.constraints.length > 20 || !input.constraints.every(value => typeof value === "string" && !!value.trim() && value.length <= 1_000)) return json(response, 400, { error: "Workspace, project, channel, bounded source reference, title, objective, and acceptance criteria are required" });
+          if (!can(input.workspaceId, "viewer")) return json(response, 403, { error: "Workspace access denied" });
+          const project = (await projects.listProjects(input.workspaceId)).find(value => value.id === input.projectId);
+          if (!project) return json(response, 404, { error: "Project not found in workspace" });
+          return json(response, 201, await muse.propose({ workspaceId: input.workspaceId, projectId: input.projectId, channel: input.channel, sourceReference: input.sourceReference.trim(), requesterId: principal.userId, title: input.title.trim(), objective: input.objective.trim(), acceptanceCriteria: input.acceptanceCriteria.map(value => value.trim()), constraints: input.constraints.map(value => value.trim()) }, project));
+        }
+        const confirmation = request.url.match(/^\/v1\/muse\/work-items\/([0-9a-f-]+)\/confirm$/i);
+        if (request.method === "POST" && confirmation) {
+          const item = (await muse.list()).find(value => value.id === confirmation[1]);
+          if (!item) return json(response, 404, { error: "Muse work item not found" });
+          if (!can(item.workspaceId, "reviewer")) return json(response, 403, { error: "Reviewer role required" });
+          const project = (await projects.listProjects(item.workspaceId)).find(value => value.id === item.projectId);
+          if (!project) return json(response, 404, { error: "Project not found" });
+          return json(response, 200, await muse.confirm(item.id, principal.email, project));
+        }
+      }
       if (request.url === "/v1/workspaces") {
         if (!projects) return json(response, 501, { error: "Workspace registry requires PostgreSQL" });
         if (request.method === "GET") { const values = await projects.listWorkspaces(); return json(response, 200, principal.system ? values : values.filter(value => principal.roles.has(value.id))); }
@@ -134,12 +165,14 @@ export function createPlatformServer(orchestrator: Orchestrator, options: { webh
           return json(response, 200, principal.system ? values : values.filter(value => can(value.workspaceId, "viewer")));
         }
         if (request.method === "POST" && request.url === "/v1/projects") {
-          const input = JSON.parse((await body(request)).toString("utf8")) as { workspaceId?: string; name?: string; repository?: string; defaultBranch?: string; githubInstallationId?: number; policy?: Partial<ProjectPolicy> };
+          const input = JSON.parse((await body(request)).toString("utf8")) as { workspaceId?: string; name?: string; repository?: string; defaultBranch?: string; githubInstallationId?: number; policy?: Partial<ProjectPolicy>; tracker?: TrackerKind; jiraProjectKey?: string };
           if (!input.workspaceId || !input.name?.trim() || !input.repository || !validRepository(input.repository) || !Number.isSafeInteger(input.githubInstallationId) || Number(input.githubInstallationId) <= 0) return json(response, 400, { error: "Workspace, name, owner/repository, and GitHub installation ID are required" });
           if (!can(input.workspaceId, "admin")) return json(response, 403, { error: "Administrator role required" });
+          const tracker = input.tracker ?? "github_issue";
+          if (!["github_issue", "jira_issue", "orqestra_only"].includes(tracker) || (tracker === "jira_issue" && !input.jiraProjectKey?.trim())) return json(response, 400, { error: "Valid tracker configuration is required" });
           const policy = { ...defaultPolicy, ...input.policy };
           if (!Array.isArray(policy.testCommand) || policy.testCommand.length < 1 || policy.timeoutSeconds < 1 || policy.timeoutSeconds > 1800 || policy.maxChangedFiles < 1 || policy.maxChangedFiles > 100 || policy.maxChangedBytes < 1 || policy.maxChangedBytes > 5_000_000 || !Array.isArray(policy.protectedPaths)) return json(response, 400, { error: "Invalid project policy" });
-          return json(response, 201, await projects.createProject({ workspaceId: input.workspaceId, name: input.name.trim(), repository: input.repository, defaultBranch: input.defaultBranch?.trim() || "main", githubInstallationId: Number(input.githubInstallationId), policy }));
+          return json(response, 201, await projects.createProject({ workspaceId: input.workspaceId, name: input.name.trim(), repository: input.repository, defaultBranch: input.defaultBranch?.trim() || "main", githubInstallationId: Number(input.githubInstallationId), policy, tracker, ...(input.jiraProjectKey?.trim() ? { jiraProjectKey: input.jiraProjectKey.trim() } : {}) }));
         }
       }
 
@@ -171,11 +204,11 @@ export function createPlatformServer(orchestrator: Orchestrator, options: { webh
   });
 }
 
-async function servicesFromEnvironment(): Promise<{ store: RunStore; queue: JobQueue; projects: ProjectRegistry; auth?: AuthService }> {
-  if (!process.env.DATABASE_URL) return { store: new JsonFileRunStore(process.env.ORQESTRA_DATA_PATH ?? ".data/runs.json"), queue: new MemoryJobQueue(), projects: new MemoryProjectRegistry() };
+async function servicesFromEnvironment(): Promise<{ store: RunStore; queue: JobQueue; projects: ProjectRegistry; museStore: MuseStore; auth?: AuthService }> {
+  if (!process.env.DATABASE_URL) return { store: new JsonFileRunStore(process.env.ORQESTRA_DATA_PATH ?? ".data/runs.json"), queue: new MemoryJobQueue(), projects: new MemoryProjectRegistry(), museStore: new MemoryMuseStore() };
   const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 10 });
   await pool.query("SELECT 1");
-  return { store: new PostgresRunStore(pool), queue: new PostgresJobQueue(pool), projects: new PostgresProjectRegistry(pool), auth: new AuthService(pool) };
+  return { store: new PostgresRunStore(pool), queue: new PostgresJobQueue(pool), projects: new PostgresProjectRegistry(pool), museStore: new PostgresMuseStore(pool), auth: new AuthService(pool) };
 }
 
 if (process.env.NODE_ENV !== "test") {
@@ -192,6 +225,8 @@ if (process.env.NODE_ENV !== "test") {
     new GitHubPullRequests(id => tokens.installationToken(id)),
     services.store,
   );
+  const jira = process.env.JIRA_BASE_URL && process.env.JIRA_EMAIL && process.env.JIRA_API_TOKEN ? { baseUrl: process.env.JIRA_BASE_URL, email: process.env.JIRA_EMAIL, apiToken: process.env.JIRA_API_TOKEN } : undefined;
+  const muse = new MuseService(services.museStore, new RoutedWorkTracker(id => tokens.installationToken(id), jira), orchestrator);
   const port = Number(process.env.PORT ?? 8786);
-  createPlatformServer(orchestrator, { webhookSecret, operatorToken }, services.queue, services.projects, tokens, services.auth).listen(port, () => console.log(`Orqestra platform listening on ${port}`));
+  createPlatformServer(orchestrator, { webhookSecret, operatorToken }, services.queue, services.projects, tokens, services.auth, muse).listen(port, () => console.log(`Orqestra platform listening on ${port}`));
 }
