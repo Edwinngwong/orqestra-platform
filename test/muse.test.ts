@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { Pool } from "pg";
 import test from "node:test";
 import { RoutedWorkTracker, type TrackerInput } from "../src/adapters/trackers.js";
 import type { Project } from "../src/domain.js";
-import { MemoryMuseStore, MuseService } from "../src/muse.js";
+import { MemoryMuseStore, MuseService, PostgresMuseStore } from "../src/muse.js";
 import { Orchestrator } from "../src/orchestrator.js";
 
 const project: Project = { id: crypto.randomUUID(), workspaceId: crypto.randomUUID(), name: "App", repository: "acme/app", defaultBranch: "main", githubInstallationId: 42, tracker: "github_issue", policy: { testCommand: ["npm", "test"], timeoutSeconds: 300, maxChangedFiles: 10, maxChangedBytes: 100_000, protectedPaths: [".github"] }, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
@@ -39,4 +40,14 @@ test("tracker routing supports GitHub, Jira, and Orqestra-only policies", async 
     assert.equal((await tracker.create({ kind: "jira_issue", repository: "acme/app", githubInstallationId: 42, jiraProjectKey: "APP", title: "A", body: "B" }))?.id, "APP-9");
     assert.equal(received.length, 2);
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+});
+
+test("persists Muse criteria and constraints as PostgreSQL JSON", { skip: !process.env.TEST_DATABASE_URL }, async () => {
+  const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL }); const workspaceId = crypto.randomUUID(); const projectId = crypto.randomUUID();
+  try {
+    await pool.query("INSERT INTO workspaces(id,name,slug) VALUES($1,$2,$3)", [workspaceId, "Muse JSON Test", `muse-json-${workspaceId.slice(0, 8)}`]);
+    await pool.query("INSERT INTO projects(id,workspace_id,name,repository,github_installation_id,policy) VALUES($1,$2,$3,$4,$5,$6)", [projectId, workspaceId, "App", `test-${workspaceId.slice(0, 8)}/app`, 1, JSON.stringify(project.policy)]);
+    const store = new PostgresMuseStore(pool); const value = await store.create({ workspaceId, projectId, channel: "whatsapp", sourceReference: `wamid.${crypto.randomUUID()}`, requesterId: crypto.randomUUID(), title: "Fix checkout", objective: "Checkout succeeds", acceptanceCriteria: ["Payment succeeds"], constraints: ["Keep existing flow"] }, "orqestra_only");
+    assert.deepEqual(value.acceptanceCriteria, ["Payment succeeds"]); assert.deepEqual(value.constraints, ["Keep existing flow"]);
+  } finally { await pool.query("DELETE FROM workspaces WHERE id=$1", [workspaceId]); await pool.end(); }
 });
