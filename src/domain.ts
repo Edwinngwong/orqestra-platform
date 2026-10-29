@@ -3,6 +3,7 @@ export type RunStatus =
   | "awaiting_intake_approval"
   | "queued"
   | "running"
+  | "failed"
   | "tests_failed"
   | "awaiting_pr_approval"
   | "draft_pr_open"
@@ -16,6 +17,13 @@ export interface WorkItem {
   repository: string;
   defaultBranch: string;
   githubInstallationId?: number;
+  workspaceId?: string;
+  projectId?: string;
+  testCommand?: string[];
+  timeoutSeconds?: number;
+  maxChangedFiles?: number;
+  maxChangedBytes?: number;
+  protectedPaths?: string[];
 }
 
 export interface Run {
@@ -25,6 +33,13 @@ export interface Run {
   branch?: string;
   testSummary?: string;
   pullRequestUrl?: string;
+}
+
+export interface Workspace { id: string; name: string; slug: string; createdAt: string }
+export interface ProjectPolicy { testCommand: string[]; timeoutSeconds: number; maxChangedFiles: number; maxChangedBytes: number; protectedPaths: string[] }
+export interface Project {
+  id: string; workspaceId: string; name: string; repository: string; defaultBranch: string;
+  githubInstallationId: number; policy: ProjectPolicy; createdAt: string; updatedAt: string;
 }
 
 export interface AgentResult {

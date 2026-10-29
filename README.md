@@ -6,7 +6,7 @@ Control plane for the independent Orqestra AI SDLC MVP.
 
 `GitHub/Jira work item -> intake approval -> coding agent -> isolated tests -> PR approval -> draft PR`
 
-The current scaffold implements the orchestration state machine, durable local run and audit storage, verified GitHub webhook primitives, and ports for external services. It intentionally cannot merge a PR. Human approvals are explicit, audited domain transitions rather than UI-only checks.
+The current MVP implements the orchestration state machine, durable PostgreSQL run and audit storage, verified GitHub webhooks, workspace/project onboarding, repository-specific execution policies, GitHub App repository discovery, and a human approval dashboard. It intentionally cannot merge a PR. Human approvals are explicit, audited domain transitions rather than UI-only checks.
 
 ## Run
 
@@ -49,12 +49,17 @@ The model response is bounded to 20 files and 1 MB, rejects absolute/traversal p
 
 For a live acceptance run, follow [the live setup checklist](docs/LIVE_SETUP.md). `scripts/bootstrap-local.sh` generates all non-provider secrets into an ignored, mode-0600 `.env.local` file.
 
+## Workspaces and projects
+
+The operator dashboard at `http://127.0.0.1:8786/` lists delivery runs and their audit history. A workspace represents a company or team. A project binds one GitHub repository and installation to a policy containing its test command, timeout, change-size limits, and protected paths.
+
+Only repositories explicitly registered as projects can create runs. The dashboard discovers repositories already authorized through the GitHub App, so operators never enter installation tokens or private keys. The local operator token is a single-administrator development mechanism; customer authentication and workspace-scoped authorization are required before external production use.
+
 ## Next milestones
 
-1. Replace the local JSON store with Postgres using the `RunStore` contract.
-2. Add the HTTP webhook endpoint and a GitHub App adapter.
-3. Connect the sandbox API using short-lived, run-scoped credentials.
-4. Add Jira intake behind the same `WorkItem` contract.
-5. Add an operator UI for approvals, logs, diffs, and cancellation.
+1. Add user authentication and workspace-scoped roles.
+2. Add an inline diff viewer and cost/usage accounting.
+3. Add Jira intake behind the same `WorkItem` contract.
+4. Replace the local executor with one ephemeral cloud task per run for production.
 
 See [the implementation plan](docs/IMPLEMENTATION_PLAN.md) and [security baseline](docs/SECURITY.md) before extending the scaffold. Copy `.env.example` to `.env` for local development; never commit the resulting file.

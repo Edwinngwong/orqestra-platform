@@ -31,5 +31,22 @@ test("does not offer a PR when tests fail", async () => {
   assert(run);
   await service.approveIntake(run.id);
   assert.equal((await service.execute(run.id)).status, "tests_failed");
+  assert.equal((await service.retry(run.id, "reviewer")).status, "queued");
+  assert.equal((await service.audit(run.id)).at(-1)?.action, "run_retried");
   await assert.rejects(() => service.approveDraftPullRequest(run.id));
+});
+
+test("records agent failures and allows a human retry", async () => {
+  const service = new Orchestrator(
+    { async implement() { throw new Error("provider unavailable"); } },
+    { async runTests() { throw new Error("must not be called"); } },
+    { async createDraft() { throw new Error("must not be called"); } },
+  );
+  const run = await service.intake({ id: "9", source: "github", title: "Change", description: "Do it", repository: "org/repo", defaultBranch: "main" });
+  assert(run);
+  await service.approveIntake(run.id);
+  const failed = await service.execute(run.id);
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.testSummary, "provider unavailable");
+  assert.equal((await service.retry(run.id)).status, "queued");
 });

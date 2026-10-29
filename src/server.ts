@@ -11,6 +11,8 @@ import { PostgresRunStore } from "./postgres-store.js";
 import { MemoryJobQueue, PostgresJobQueue, type JobQueue } from "./queue/jobs.js";
 import { JsonFileRunStore, type RunStore } from "./store.js";
 import { operatorHtml } from "./ui/operator.js";
+import { MemoryProjectRegistry, PostgresProjectRegistry, type ProjectRegistry } from "./projects.js";
+import type { ProjectPolicy } from "./domain.js";
 
 function authorized(request: IncomingMessage, token: string): boolean {
   const value = request.headers.authorization;
@@ -31,7 +33,10 @@ async function body(request: IncomingMessage): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-export function createPlatformServer(orchestrator: Orchestrator, options: { webhookSecret: string; operatorToken: string }, queue: JobQueue = new MemoryJobQueue()) {
+const defaultPolicy: ProjectPolicy = { testCommand: ["npm", "test"], timeoutSeconds: 900, maxChangedFiles: 20, maxChangedBytes: 1_000_000, protectedPaths: [".github/workflows", ".env", "infra"] };
+function validRepository(value: string) { return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value); }
+
+export function createPlatformServer(orchestrator: Orchestrator, options: { webhookSecret: string; operatorToken: string }, queue: JobQueue = new MemoryJobQueue(), projects?: ProjectRegistry, github?: GitHubAppTokens) {
   return createServer(async (request, response) => {
     try {
       if (request.method === "GET" && request.url === "/") { response.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'", "x-content-type-options": "nosniff" }); response.end(operatorHtml); return; }
@@ -43,11 +48,59 @@ export function createPlatformServer(orchestrator: Orchestrator, options: { webh
         if (event !== "issues" || typeof deliveryId !== "string" || !verifyGitHubSignature(raw, typeof signature === "string" ? signature : undefined, options.webhookSecret)) return json(response, 401);
         const item = githubIssueToWorkItem(JSON.parse(raw.toString("utf8")));
         if (!item) return json(response, 202);
+        if (projects) {
+          const project = await projects.findByRepository(item.repository);
+          if (!project) return json(response, 409, { error: "Repository is not configured as an Orqestra project" });
+          item.workspaceId = project.workspaceId;
+          item.projectId = project.id;
+          item.defaultBranch = project.defaultBranch;
+          item.githubInstallationId = project.githubInstallationId;
+          item.testCommand = project.policy.testCommand;
+          item.timeoutSeconds = project.policy.timeoutSeconds;
+          item.maxChangedFiles = project.policy.maxChangedFiles;
+          item.maxChangedBytes = project.policy.maxChangedBytes;
+          item.protectedPaths = project.policy.protectedPaths;
+        }
         const run = await orchestrator.intake(item, deliveryId);
         return run ? json(response, 201, { runId: run.id, status: run.status }) : json(response, 202, { duplicate: true });
       }
 
-      const match = request.url?.match(/^\/v1\/runs\/([0-9a-f-]+)(?:\/(audit|approve-intake|execute|approve-pr|cancel))?$/i);
+      if (request.url === "/v1/runs" && request.method === "GET") {
+        if (!authorized(request, options.operatorToken)) return json(response, 401);
+        return json(response, 200, await orchestrator.list());
+      }
+      if (request.url === "/v1/github/repositories" && request.method === "GET") {
+        if (!authorized(request, options.operatorToken)) return json(response, 401);
+        if (!github) return json(response, 501, { error: "GitHub App discovery is unavailable" });
+        return json(response, 200, await github.repositories());
+      }
+      if (request.url === "/v1/workspaces") {
+        if (!authorized(request, options.operatorToken)) return json(response, 401);
+        if (!projects) return json(response, 501, { error: "Workspace registry requires PostgreSQL" });
+        if (request.method === "GET") return json(response, 200, await projects.listWorkspaces());
+        if (request.method === "POST") {
+          const input = JSON.parse((await body(request)).toString("utf8")) as { name?: string; slug?: string };
+          if (!input.name?.trim() || !input.slug || !/^[a-z0-9][a-z0-9-]{1,62}$/.test(input.slug)) return json(response, 400, { error: "Valid workspace name and slug are required" });
+          return json(response, 201, await projects.createWorkspace({ name: input.name.trim(), slug: input.slug }));
+        }
+      }
+      if (request.url?.startsWith("/v1/projects")) {
+        if (!authorized(request, options.operatorToken)) return json(response, 401);
+        if (!projects) return json(response, 501, { error: "Project registry requires PostgreSQL" });
+        if (request.method === "GET") {
+          const workspaceId = new URL(request.url, "http://local").searchParams.get("workspaceId") ?? undefined;
+          return json(response, 200, await projects.listProjects(workspaceId));
+        }
+        if (request.method === "POST" && request.url === "/v1/projects") {
+          const input = JSON.parse((await body(request)).toString("utf8")) as { workspaceId?: string; name?: string; repository?: string; defaultBranch?: string; githubInstallationId?: number; policy?: Partial<ProjectPolicy> };
+          if (!input.workspaceId || !input.name?.trim() || !input.repository || !validRepository(input.repository) || !Number.isSafeInteger(input.githubInstallationId) || Number(input.githubInstallationId) <= 0) return json(response, 400, { error: "Workspace, name, owner/repository, and GitHub installation ID are required" });
+          const policy = { ...defaultPolicy, ...input.policy };
+          if (!Array.isArray(policy.testCommand) || policy.testCommand.length < 1 || policy.timeoutSeconds < 1 || policy.timeoutSeconds > 1800 || policy.maxChangedFiles < 1 || policy.maxChangedFiles > 100 || policy.maxChangedBytes < 1 || policy.maxChangedBytes > 5_000_000 || !Array.isArray(policy.protectedPaths)) return json(response, 400, { error: "Invalid project policy" });
+          return json(response, 201, await projects.createProject({ workspaceId: input.workspaceId, name: input.name.trim(), repository: input.repository, defaultBranch: input.defaultBranch?.trim() || "main", githubInstallationId: Number(input.githubInstallationId), policy }));
+        }
+      }
+
+      const match = request.url?.match(/^\/v1\/runs\/([0-9a-f-]+)(?:\/(audit|approve-intake|execute|approve-pr|retry|cancel))?$/i);
       if (!match || !authorized(request, options.operatorToken)) return json(response, match ? 401 : 404);
       const runId = match[1]!;
       const action = match[2];
@@ -63,6 +116,7 @@ export function createPlatformServer(orchestrator: Orchestrator, options: { webh
       }
       if (request.method === "POST" && action === "execute") return json(response, 200, await orchestrator.execute(runId));
       if (request.method === "POST" && action === "approve-pr") return json(response, 200, await orchestrator.approveDraftPullRequest(runId, human));
+      if (request.method === "POST" && action === "retry") { const run = await orchestrator.retry(runId, human); await queue.enqueue(runId); return json(response, 202, run); }
       if (request.method === "POST" && action === "cancel") { await queue.cancel(runId); return json(response, 200, await orchestrator.cancel(runId, human)); }
       return json(response, 405);
     } catch (error) {
@@ -72,11 +126,11 @@ export function createPlatformServer(orchestrator: Orchestrator, options: { webh
   });
 }
 
-async function servicesFromEnvironment(): Promise<{ store: RunStore; queue: JobQueue }> {
-  if (!process.env.DATABASE_URL) return { store: new JsonFileRunStore(process.env.ORQESTRA_DATA_PATH ?? ".data/runs.json"), queue: new MemoryJobQueue() };
+async function servicesFromEnvironment(): Promise<{ store: RunStore; queue: JobQueue; projects: ProjectRegistry }> {
+  if (!process.env.DATABASE_URL) return { store: new JsonFileRunStore(process.env.ORQESTRA_DATA_PATH ?? ".data/runs.json"), queue: new MemoryJobQueue(), projects: new MemoryProjectRegistry() };
   const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 10 });
   await pool.query("SELECT 1");
-  return { store: new PostgresRunStore(pool), queue: new PostgresJobQueue(pool) };
+  return { store: new PostgresRunStore(pool), queue: new PostgresJobQueue(pool), projects: new PostgresProjectRegistry(pool) };
 }
 
 if (process.env.NODE_ENV !== "test") {
@@ -94,5 +148,5 @@ if (process.env.NODE_ENV !== "test") {
     services.store,
   );
   const port = Number(process.env.PORT ?? 8786);
-  createPlatformServer(orchestrator, { webhookSecret, operatorToken }, services.queue).listen(port, () => console.log(`Orqestra platform listening on ${port}`));
+  createPlatformServer(orchestrator, { webhookSecret, operatorToken }, services.queue, services.projects, tokens).listen(port, () => console.log(`Orqestra platform listening on ${port}`));
 }

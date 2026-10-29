@@ -23,6 +23,20 @@ export class GitHubAppTokens {
     if (!result.token) throw new Error("GitHub did not return an installation token");
     return result.token;
   }
+  async repositories(): Promise<Array<{ installationId: number; repository: string; defaultBranch: string }>> {
+    const installationsResponse = await fetch(`${this.apiBase}/app/installations`, { headers: { accept: "application/vnd.github+json", authorization: `Bearer ${this.jwt()}`, "x-github-api-version": "2022-11-28" } });
+    if (!installationsResponse.ok) throw new Error(`GitHub installations lookup failed (${installationsResponse.status})`);
+    const installations = await installationsResponse.json() as Array<{ id: number }>;
+    const result: Array<{ installationId: number; repository: string; defaultBranch: string }> = [];
+    for (const installation of installations) {
+      const token = await this.installationToken(installation.id);
+      const repositoriesResponse = await fetch(`${this.apiBase}/installation/repositories?per_page=100`, { headers: { accept: "application/vnd.github+json", authorization: `Bearer ${token}`, "x-github-api-version": "2022-11-28" } });
+      if (!repositoriesResponse.ok) throw new Error(`GitHub repositories lookup failed (${repositoriesResponse.status})`);
+      const page = await repositoriesResponse.json() as { repositories?: Array<{ full_name: string; default_branch?: string }> };
+      for (const repository of page.repositories ?? []) result.push({ installationId: installation.id, repository: repository.full_name, defaultBranch: repository.default_branch ?? "main" });
+    }
+    return result.sort((a, b) => a.repository.localeCompare(b.repository));
+  }
 }
 
 export class GitHubPullRequests implements PullRequests {

@@ -21,6 +21,8 @@ export class Orchestrator {
     return run;
   }
 
+  list(limit = 100): Promise<Run[]> { return this.store.list(limit); }
+
   async approveIntake(runId: string, actor = "human"): Promise<Run> {
     const run = await this.get(runId);
     if (run.status !== "awaiting_intake_approval") throw new Error(`Cannot approve intake from ${run.status}`);
@@ -35,13 +37,32 @@ export class Orchestrator {
     if (run.status !== "queued") throw new Error(`Cannot execute from ${run.status}`);
     run.status = "running";
     await this.store.put(run);
-    const change = await this.agent.implement(run.workItem);
-    run.branch = change.branch;
-    const tests = await this.sandbox.runTests(run.workItem, change.commit);
-    run.testSummary = tests.summary;
-    run.status = tests.passed ? "awaiting_pr_approval" : "tests_failed";
+    try {
+      const change = await this.agent.implement(run.workItem);
+      run.branch = change.branch;
+      const tests = await this.sandbox.runTests(run.workItem, change.commit);
+      run.testSummary = tests.summary;
+      run.status = tests.passed ? "awaiting_pr_approval" : "tests_failed";
+      await this.store.put(run);
+      await this.record(run.id, tests.passed ? "tests_passed" : "tests_failed", "system");
+    } catch (error) {
+      run.status = "failed";
+      run.testSummary = error instanceof Error ? error.message : "Execution failed";
+      await this.store.put(run);
+      await this.record(run.id, "execution_failed", "system");
+    }
+    return structuredClone(run);
+  }
+
+  async retry(runId: string, actor = "human"): Promise<Run> {
+    const run = await this.get(runId);
+    if (!(["failed", "tests_failed"] as string[]).includes(run.status)) throw new Error(`Cannot retry from ${run.status}`);
+    run.status = "queued";
+    delete run.branch;
+    delete run.testSummary;
+    delete run.pullRequestUrl;
     await this.store.put(run);
-    await this.record(run.id, tests.passed ? "tests_passed" : "tests_failed", "system");
+    await this.record(run.id, "run_retried", actor);
     return structuredClone(run);
   }
 

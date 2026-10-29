@@ -7,6 +7,8 @@ test("accepts bounded file replacements and rejects traversal", () => {
   assert.deepEqual(parseAgentOutput({ summary: "done", files: [{ path: "src/app.ts", content: "export {};" }] }).files[0]?.path, "src/app.ts");
   assert.throws(() => parseAgentOutput({ summary: "bad", files: [{ path: "../secret", content: "x" }] }));
   assert.throws(() => parseAgentOutput({ summary: "too many", files: Array.from({ length: 21 }, (_, index) => ({ path: `f${index}`, content: "x" })) }));
+  assert.throws(() => parseAgentOutput({ summary: "protected", files: [{ path: ".github/workflows/release.yml", content: "x" }] }, 20, 1_000_000, [".github/workflows"]));
+  assert.throws(() => parseAgentOutput({ summary: "too large", files: [{ path: "src/app.ts", content: "12345" }] }, 20, 4));
 });
 
 test("turns a schema-constrained model response into a GitHub branch commit", async () => {

@@ -28,3 +28,17 @@ test("exchanges a signed GitHub App JWT for an installation token", async () => 
   try { assert.equal(await new GitHubAppTokens("42", privateKey).installationToken(123), "installation-token"); }
   finally { globalThis.fetch = originalFetch; }
 });
+
+test("discovers repositories across GitHub App installations", async () => {
+  const privateKey = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async input => {
+    const url = String(input);
+    if (url.endsWith("/app/installations")) return Response.json([{ id: 123 }]);
+    if (url.endsWith("/app/installations/123/access_tokens")) return Response.json({ token: "installation-token" }, { status: 201 });
+    if (url.includes("/installation/repositories")) return Response.json({ repositories: [{ full_name: "acme/api", default_branch: "trunk" }] });
+    return new Response("unexpected", { status: 500 });
+  };
+  try { assert.deepEqual(await new GitHubAppTokens("42", privateKey).repositories(), [{ installationId: 123, repository: "acme/api", defaultBranch: "trunk" }]); }
+  finally { globalThis.fetch = originalFetch; }
+});

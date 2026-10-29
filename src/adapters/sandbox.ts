@@ -10,11 +10,11 @@ export class SandboxHttpClient implements Sandbox {
     const response = await fetch(`${this.baseUrl}/v1/runs`, {
       method: "POST",
       headers: { authorization: `Bearer ${this.token}`, "content-type": "application/json" },
-      body: JSON.stringify({ runId: crypto.randomUUID(), repository: item.repository, commit, command: ["npm", "test"], timeoutSeconds: 900, ...(repositoryToken ? { repositoryToken } : {}) }),
+      body: JSON.stringify({ runId: crypto.randomUUID(), repository: item.repository, commit, command: item.testCommand ?? ["npm", "test"], timeoutSeconds: item.timeoutSeconds ?? 900, ...(repositoryToken ? { repositoryToken } : {}) }),
     });
     if (!response.ok) throw new Error(`Sandbox rejected run (${response.status})`);
     const accepted = await response.json() as { request: { runId: string } };
-    const deadline = Date.now() + 910_000;
+    const deadline = Date.now() + ((item.timeoutSeconds ?? 900) + 10) * 1000;
     while (Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, this.pollMs));
       const statusResponse = await fetch(`${this.baseUrl}/v1/runs/${accepted.request.runId}`, { headers: { authorization: `Bearer ${this.token}` } });

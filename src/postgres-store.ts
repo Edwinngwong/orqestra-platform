@@ -31,8 +31,12 @@ export class PostgresRunStore implements RunStore {
     const result = await this.pool.query("SELECT occurred_at AS at, run_id AS \"runId\", action, actor FROM audit_events WHERE run_id = $1 ORDER BY id", [runId]);
     return result.rows.map(row => ({ ...row, at: new Date(row.at as string | Date).toISOString() })) as AuditEvent[];
   }
+  async list(limit = 100): Promise<Run[]> {
+    const result = await this.pool.query("SELECT payload FROM runs ORDER BY created_at DESC LIMIT $1", [Math.max(1, Math.min(limit, 500))]);
+    return result.rows.map(row => row.payload as Run);
+  }
   private async insertRun(client: Pick<PoolClient, "query">, run: Run) {
-    await client.query("INSERT INTO runs (id, source, source_item_id, repository, status, payload) VALUES ($1, $2, $3, $4, $5, $6)", [run.id, run.workItem.source, run.workItem.id, run.workItem.repository, run.status, run]);
+    await client.query("INSERT INTO runs (id, project_id, source, source_item_id, repository, status, payload) VALUES ($1, $2, $3, $4, $5, $6, $7)", [run.id, run.workItem.projectId ?? null, run.workItem.source, run.workItem.id, run.workItem.repository, run.status, run]);
   }
   private async insertAudit(client: Pick<PoolClient, "query"> | Pool, event: AuditEvent) {
     await client.query("INSERT INTO audit_events (run_id, occurred_at, action, actor) VALUES ($1, $2, $3, $4)", [event.runId, event.at, event.action, event.actor]);

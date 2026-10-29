@@ -9,6 +9,7 @@ export interface RunStore {
   put(run: Run): Promise<void>;
   appendAudit(event: AuditEvent): Promise<void>;
   audit(runId: string): Promise<AuditEvent[]>;
+  list(limit?: number): Promise<Run[]>;
 }
 
 interface Database { runs: Record<string, Run>; audit: AuditEvent[]; deliveries: string[] }
@@ -28,6 +29,7 @@ export class MemoryRunStore implements RunStore {
   async put(run: Run) { this.runs.set(run.id, structuredClone(run)); }
   async appendAudit(event: AuditEvent) { this.events.push(structuredClone(event)); }
   async audit(runId: string) { return this.events.filter(event => event.runId === runId).map(event => structuredClone(event)); }
+  async list(limit = 100) { return [...this.runs.values()].slice(-limit).reverse().map(run => structuredClone(run)); }
 }
 
 export class JsonFileRunStore implements RunStore {
@@ -45,6 +47,7 @@ export class JsonFileRunStore implements RunStore {
   async put(run: Run) { const db = await this.read(); db.runs[run.id] = structuredClone(run); await this.write(db); }
   async appendAudit(event: AuditEvent) { const db = await this.read(); db.audit.push(structuredClone(event)); await this.write(db); }
   async audit(runId: string) { return (await this.read()).audit.filter(event => event.runId === runId); }
+  async list(limit = 100) { return Object.values((await this.read()).runs).slice(-limit).reverse(); }
   private async read(): Promise<Database> {
     try {
       const parsed = JSON.parse(await readFile(this.path, "utf8")) as Partial<Database>;
