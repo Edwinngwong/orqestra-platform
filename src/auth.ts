@@ -5,7 +5,7 @@ import type { Pool } from "pg";
 
 const scrypt = promisify(scryptCallback);
 export type WorkspaceRole = "owner" | "admin" | "reviewer" | "viewer";
-export interface Principal { userId: string; email: string; mustChangePassword: boolean; system: boolean; roles: Map<string, WorkspaceRole>; csrfHash?: string; sessionHash?: string }
+export interface Principal { userId: string; email: string; mustChangePassword: boolean; system: boolean; roles: Map<string, WorkspaceRole>; csrfToken?: string; sessionHash?: string }
 const rank: Record<WorkspaceRole, number> = { viewer: 1, reviewer: 2, admin: 3, owner: 4 };
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 
@@ -52,7 +52,7 @@ export class AuthService {
     const roles = new Map<string, WorkspaceRole>();
     for (const row of result.rows) if (row.workspaceId) roles.set(String(row.workspaceId), row.role as WorkspaceRole);
     const first = result.rows[0];
-    return { userId: first.id, email: first.email, mustChangePassword: first.mustChangePassword, system: false, roles, csrfHash: first.csrfHash, sessionHash };
+    return { userId: first.id, email: first.email, mustChangePassword: first.mustChangePassword, system: false, roles, csrfToken: first.csrfHash, sessionHash };
   }
   async login(email: string, password: string): Promise<{ cookie: string; csrfToken: string; user: { id: string; email: string; mustChangePassword: boolean; roles: Array<{ workspaceId: string; role: WorkspaceRole }> } }> {
     const result = await this.pool.query('SELECT id,email,password_hash AS "passwordHash",must_change_password AS "mustChangePassword" FROM users WHERE email=lower($1) AND active', [email]);
@@ -60,11 +60,16 @@ export class AuthService {
     if (!user || !(await verifyPassword(password, user.passwordHash))) throw new Error("Invalid email or password");
     const token = randomBytes(32).toString("base64url"), csrfToken = randomBytes(32).toString("base64url");
     await this.pool.query("DELETE FROM user_sessions WHERE expires_at<=now()");
-    await this.pool.query("INSERT INTO user_sessions(token_hash,csrf_hash,user_id,expires_at) VALUES($1,$2,$3,now()+interval '12 hours')", [digest(token), digest(csrfToken), user.id]);
+    await this.pool.query("INSERT INTO user_sessions(token_hash,csrf_hash,user_id,expires_at) VALUES($1,$2,$3,now()+interval '12 hours')", [digest(token), csrfToken, user.id]);
     const memberships = await this.pool.query('SELECT workspace_id AS "workspaceId",role FROM workspace_memberships WHERE user_id=$1', [user.id]);
     return { cookie: `orqestra_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200`, csrfToken, user: { id: user.id, email: user.email, mustChangePassword: user.mustChangePassword, roles: memberships.rows } };
   }
-  validateCsrf(request: IncomingMessage, principal: Principal): boolean { return principal.system || (!!principal.csrfHash && digest(String(request.headers["x-csrf-token"] ?? "")) === principal.csrfHash); }
+  validateCsrf(request: IncomingMessage, principal: Principal): boolean {
+    if (principal.system) return true;
+    const received = Buffer.from(String(request.headers["x-csrf-token"] ?? ""));
+    const expected = Buffer.from(principal.csrfToken ?? "");
+    return received.length > 0 && received.length === expected.length && timingSafeEqual(received, expected);
+  }
   can(principal: Principal, workspaceId: string | undefined, minimum: WorkspaceRole): boolean { return principal.system || (!!workspaceId && rank[principal.roles.get(workspaceId) ?? "viewer"] >= rank[minimum] && principal.roles.has(workspaceId)); }
   async logout(principal: Principal) { if (principal.sessionHash) await this.pool.query("DELETE FROM user_sessions WHERE token_hash=$1", [principal.sessionHash]); }
   async changePassword(principal: Principal, current: string, next: string) {

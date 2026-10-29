@@ -38,6 +38,10 @@ test("enforces sessions, CSRF, and workspace roles", { skip: !process.env.TEST_D
   try {
     assert.equal((await fetch(`${base}/v1/workspaces`)).status, 401);
     const owner = await login(`owner-${suffix}@example.test`);
+    const restored = await fetch(`${base}/v1/auth/me`, { headers: { cookie: owner.cookie } });
+    assert.equal((await restored.json() as { csrfToken: string }).csrfToken, owner.csrf);
+    const passwordChange = await fetch(`${base}/v1/auth/change-password`, { method: "POST", headers: { cookie: owner.cookie, "x-csrf-token": owner.csrf, "content-type": "application/json" }, body: JSON.stringify({ currentPassword: password, newPassword: "A-different-strong-password-456!" }) });
+    assert.equal(passwordChange.status, 200, await passwordChange.text());
     const withoutCsrf = await fetch(`${base}/v1/projects`, { method: "POST", headers: { cookie: owner.cookie, "content-type": "application/json" }, body: "{}" });
     assert.equal(withoutCsrf.status, 403);
     const ownerList = await fetch(`${base}/v1/workspaces`, { headers: { cookie: owner.cookie } });

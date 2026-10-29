@@ -84,7 +84,7 @@ export function createPlatformServer(orchestrator: Orchestrator, options: { webh
       const stateChanging = ["POST", "PUT", "PATCH", "DELETE"].includes(request.method ?? "");
       if (stateChanging && auth && !auth.validateCsrf(request, principal)) return json(response, 403, { error: "Invalid CSRF token" });
       const can = (workspaceId: string | undefined, role: WorkspaceRole) => principal.system || (!!auth && auth.can(principal, workspaceId, role));
-      if (request.url === "/v1/auth/me" && request.method === "GET") return json(response, 200, { id: principal.userId, email: principal.email, mustChangePassword: principal.mustChangePassword, system: principal.system, roles: [...principal.roles].map(([workspaceId, role]) => ({ workspaceId, role })) });
+      if (request.url === "/v1/auth/me" && request.method === "GET") return json(response, 200, { id: principal.userId, email: principal.email, mustChangePassword: principal.mustChangePassword, system: principal.system, csrfToken: principal.csrfToken, roles: [...principal.roles].map(([workspaceId, role]) => ({ workspaceId, role })) });
       if (request.url === "/v1/auth/logout" && request.method === "POST") { if (auth) await auth.logout(principal); return json(response, 204, undefined, { "set-cookie": "orqestra_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0" }); }
       if (request.url === "/v1/auth/change-password" && request.method === "POST") {
         if (!auth || principal.system) return json(response, 400, { error: "Password change is unavailable for the bootstrap operator" });
