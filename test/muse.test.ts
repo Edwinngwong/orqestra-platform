@@ -28,6 +28,13 @@ test("Muse confirms a proposal, routes it to the selected tracker, and creates a
   await assert.rejects(() => muse.confirm(proposal.id, "reviewer@example.test", project), /Cannot confirm/);
 });
 
+test("Muse proposal intake is idempotent for a channel source and project", async () => {
+  const muse = new MuseService(new MemoryMuseStore(), { async create() { return undefined; } }, new Orchestrator({ async implement() { throw new Error("not called"); } }, { async runTests() { throw new Error("not called"); } }, { async createDraft() { throw new Error("not called"); } }));
+  const input = { workspaceId: project.workspaceId, projectId: project.id, channel: "whatsapp" as const, sourceReference: "wamid.retry", requesterId: "user-1", title: "Health check", objective: "Expose health", acceptanceCriteria: ["Returns 200"], constraints: [] };
+  const first = await muse.propose(input, project); const retry = await muse.propose(input, project);
+  assert.equal(retry.id, first.id);
+});
+
 test("tracker routing supports GitHub, Jira, and Orqestra-only policies", async () => {
   const received: Array<{ url?: string; body: string }> = [];
   const server = createServer(async (request, response) => { let body = ""; for await (const chunk of request) body += chunk; received.push({ ...(request.url ? { url: request.url } : {}), body }); response.writeHead(201, { "content-type": "application/json" }); response.end(request.url?.includes("/repos/") ? JSON.stringify({ number: 9, html_url: "https://github.test/issues/9" }) : JSON.stringify({ key: "APP-9" })); });

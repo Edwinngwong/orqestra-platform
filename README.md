@@ -39,6 +39,9 @@ workspace, and default project. Muse either asks one clarification question or
 creates a proposal and returns its review link; it never confirms or executes
 work from WhatsApp.
 
+Proposal creation is idempotent per WhatsApp message and project, so a failed
+outbound confirmation can be retried without creating duplicate work.
+
 Run `./scripts/configure-whatsapp-local.sh` to enter Meta's Phone Number ID, App
 Secret, and replacement access token without echoing secrets. The script creates
 a separate random webhook verification token in the ignored mode-0600

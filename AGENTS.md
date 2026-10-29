@@ -33,7 +33,7 @@ Current capabilities:
 - Per-project routing to GitHub Issues, Jira, or Orqestra-only tracking while keeping the code host independent.
 - Dashboard support for tracker selection, Muse proposal review, confirmation, and external ticket links.
 - Meta webhook verification and constant-time `X-Hub-Signature-256` validation.
-- Durable, replay-protected WhatsApp inbox with bounded retries and restart recovery.
+- Durable, replay-protected WhatsApp inbox with bounded retries, restart recovery, and idempotent proposal creation when outbound delivery is retried.
 - Explicit `@muse` intake only, deterministic model-output validation, clarification replies, and proposal links.
 - Revocable phone-to-user/workspace/project bindings that stop working when membership is removed.
 - Outbound WhatsApp Cloud API replies and dashboard binding controls with masked phone numbers.
