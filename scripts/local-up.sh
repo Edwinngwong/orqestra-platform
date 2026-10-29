@@ -58,6 +58,11 @@ docker compose up -d postgres
 npm run db:migrate
 
 start sandbox-api "$sandbox" env PORT=8787 "$sandbox/node_modules/.bin/tsx" src/server.ts
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+  curl -fsS -H "Authorization: Bearer $SANDBOX_WORKER_TOKEN" http://127.0.0.1:8787/v1/jobs/next >/dev/null 2>&1 && break
+  [ "$attempt" -lt 10 ] || { echo "Sandbox API did not become ready" >&2; exit 1; }
+  sleep 1
+done
 start sandbox-worker "$sandbox" env EXECUTOR_IMAGE="$executor_image" "$sandbox/node_modules/.bin/tsx" src/worker.ts
 start platform-api "$root" "$root/node_modules/.bin/tsx" src/server.ts
 start platform-worker "$root" "$root/node_modules/.bin/tsx" src/worker-main.ts
