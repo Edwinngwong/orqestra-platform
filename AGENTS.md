@@ -10,9 +10,9 @@ Do not use, request, reproduce, translate, or derive from any employer-proprieta
 
 ## Current milestone
 
-- Milestone: Signed WhatsApp Muse development adapter
-- Platform version: 0.7.0
-- Latest migration: 007_whatsapp_muse.sql
+- Milestone: Recoverable WhatsApp Muse confirmation
+- Platform version: 0.7.1
+- Latest migration: 008_muse_run_source.sql
 - Compatible sandbox version: 0.2.x
 - Milestone status: complete and live-tested locally
 
@@ -41,6 +41,7 @@ Current capabilities:
 - Public privacy, terms, and data-deletion pages for Meta app publication, with a project-owned app icon.
 - One-command local start/status/stop with automatic Cloudflare quick-tunnel webhook updates.
 - Direct WhatsApp proposal-review URLs load the operator console correctly when the `muse` query parameter is present; regression-tested after a persistent local restart.
+- Confirmed Muse proposals create `muse`-sourced delivery runs on upgraded databases and safely resume after tracker or persistence failures without duplicating the external issue.
 
 Known gaps before broad production use:
 

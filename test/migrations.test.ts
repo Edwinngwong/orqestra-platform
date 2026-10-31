@@ -29,3 +29,11 @@ test("WhatsApp bindings and durable inbox are migrated", { skip: !process.env.TE
     assert.equal(result.rows[0].messages, "whatsapp_messages");
   } finally { await pool.end(); }
 });
+
+test("runs accept Muse as a durable intake source", { skip: !process.env.TEST_DATABASE_URL }, async () => {
+  const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  try {
+    const result = await pool.query("SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE conrelid='runs'::regclass AND conname='runs_source_check'");
+    assert.match(result.rows[0]?.definition ?? "", /'muse'/);
+  } finally { await pool.end(); }
+});
