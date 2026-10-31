@@ -40,6 +40,7 @@ Current capabilities:
 - Live Meta validation completed for WABA app subscription, authorized inbound `@muse` delivery, proposal creation, and outbound proposal notification.
 - Public privacy, terms, and data-deletion pages for Meta app publication, with a project-owned app icon.
 - One-command local start/status/stop with automatic Cloudflare quick-tunnel webhook updates.
+- Direct WhatsApp proposal-review URLs load the operator console correctly when the `muse` query parameter is present; regression-tested after a persistent local restart.
 
 Known gaps before broad production use:
 

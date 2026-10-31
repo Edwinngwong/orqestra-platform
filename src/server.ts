@@ -48,7 +48,7 @@ const systemPrincipal: Principal = { userId: "system", email: "local-operator", 
 export function createPlatformServer(orchestrator: Orchestrator, options: { webhookSecret: string; operatorToken: string; whatsappAppSecret?: string; whatsappVerifyToken?: string; whatsappPhoneNumberId?: string; publicBaseUrl?: string }, queue: JobQueue = new MemoryJobQueue(), projects?: ProjectRegistry, github?: GitHubAppTokens, auth?: AuthService, muse?: MuseService, whatsapp?: WhatsAppMuseService) {
   return createServer(async (request, response) => {
     try {
-      if (request.method === "GET" && request.url === "/") { response.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'", "x-content-type-options": "nosniff" }); response.end(operatorHtml); return; }
+      if (request.method === "GET" && new URL(request.url ?? "/", "http://local").pathname === "/") { response.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'", "x-content-type-options": "nosniff" }); response.end(operatorHtml); return; }
       if (request.url?.startsWith("/webhooks/whatsapp") && request.method === "GET") {
         if (!whatsapp || !options.whatsappVerifyToken) return json(response, 404);
         const challenge = verifyMetaChallenge(new URL(request.url, "http://local").searchParams, options.whatsappVerifyToken);

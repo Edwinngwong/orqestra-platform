@@ -65,3 +65,20 @@ test("requires project onboarding and exposes workspace, project, and run lists"
     assert.equal((await (await fetch(`${base}/v1/runs`, { headers: operatorHeaders })).json() as unknown[]).length, 1);
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 });
+
+test("serves the operator console when a Muse proposal query is present", async () => {
+  const orchestrator = new Orchestrator(
+    { async implement() { throw new Error("not called"); } },
+    { async runTests() { throw new Error("not called"); } },
+    { async createDraft() { throw new Error("not called"); } },
+  );
+  const server = createPlatformServer(orchestrator, { webhookSecret: "secret", operatorToken: "operator-secret" });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert(address && typeof address === "object");
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/?muse=60f3c9a5-bb09-4087-a779-78df0b6875b5`);
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /ORQESTRA/);
+  } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+});
