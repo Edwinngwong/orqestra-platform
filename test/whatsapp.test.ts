@@ -78,10 +78,10 @@ test("sends WhatsApp updates for a routed Muse run", async () => {
   let transientFailure = true;
   const service = new WhatsAppMuseService(store, projects, muse, { async interpret() { throw new Error("not called"); } }, { async sendText(_to, text) { if (transientFailure) { transientFailure = false; throw new Error("Meta unavailable"); } replies.push(text); return "wamid.reply"; } });
   const run = await orchestrator.get(routed.runId); run.pullRequestUrl = "https://github.example/acme/app/pull/1"; run.testSummary = "all passed";
-  await service.notifyRun(run, "work_started"); await service.notifyRun(run, "work_started"); await service.notifyRun(run, "change_ready"); await service.notifyRun(run, "pr_ready"); await service.notifyRun({ ...run, testSummary: "tests failed" }, "run_failed");
-  for (let attempt = 0; attempt < 5; attempt++) assert.equal(await service.processNextNotification(), true);
+  await service.notifyRun(run, "work_started"); await service.notifyRun(run, "work_started"); await service.notifyRun(run, "change_ready"); await service.notifyRun(run, "pr_ready"); await service.notifyRun(run, "completed"); await service.notifyRun({ ...run, testSummary: "tests failed" }, "run_failed");
+  for (let attempt = 0; attempt < 6; attempt++) assert.equal(await service.processNextNotification(), true);
   assert.equal(await service.processNextNotification(), false);
-  assert.match(replies[0]!, /started work/); assert.match(replies[1]!, /tests passed/); assert.match(replies[2]!, /pull\/1/); assert.match(replies[3]!, /tests failed/);
+  assert.match(replies[0]!, /started work/); assert.match(replies[1]!, /tests passed/); assert.match(replies[2]!, /pull\/1/); assert.match(replies[3]!, /workflow is complete/); assert.match(replies[4]!, /tests failed/);
 });
 
 test("sends bounded text through the WhatsApp Cloud API", async () => {

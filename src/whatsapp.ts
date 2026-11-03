@@ -101,6 +101,7 @@ export class WhatsAppMuseService {
       work_started: `Orqestra started work on “${proposal.title}”.`,
       change_ready: `Orqestra finished the code change for “${proposal.title}” and the tests passed. A reviewer must now approve creation of the draft PR.`,
       pr_ready: `The draft PR for “${proposal.title}” is ready for review:\n${run.pullRequestUrl ?? "Open the Orqestra dashboard to review it."}`,
+      completed: `“${proposal.title}” was merged successfully. The Orqestra workflow is complete.`,
       run_failed: `Orqestra could not complete “${proposal.title}”.\n\n${(run.testSummary ?? "Open the Orqestra dashboard for details.").slice(0, 1000)}`,
     };
     if (messages[event]) await this.store.enqueueNotification({ runId: run.id, event, senderWaId: binding.senderWaId, text: messages[event] });

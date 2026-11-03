@@ -38,7 +38,7 @@ Current capabilities:
 - Revocable phone-to-user/workspace/project bindings that stop working when membership is removed.
 - Outbound WhatsApp Cloud API replies and dashboard binding controls with masked phone numbers.
 - Live Meta validation completed for WABA app subscription, authorized inbound `@muse` delivery, proposal creation, and outbound proposal notification.
-- Configurable direct-message trigger prefixes and durable, retryable WhatsApp notifications for work start, passing tests, draft PR readiness, and failures.
+- Configurable direct-message trigger prefixes and durable, retryable WhatsApp notifications for work start, passing tests, draft PR readiness, merged completion, and failures.
 - Public privacy, terms, and data-deletion pages for Meta app publication, with a project-owned app icon.
 - One-command local start/status/stop with automatic Cloudflare quick-tunnel webhook updates.
 - Direct WhatsApp proposal-review URLs load the operator console correctly when the `muse` query parameter is present; regression-tested after a persistent local restart.

@@ -22,7 +22,10 @@ test("requires both human approvals before opening a draft PR", async () => {
   const opened = await service.approveDraftPullRequest(run.id);
   assert.equal(opened.status, "draft_pr_open");
   assert.equal(prCalls, 1);
-  assert.deepEqual(notifications, ["work_started", "change_ready", "pr_ready"]);
+  const completed = await service.completeMergedPullRequest("org/repo", "orqestra/7", "https://example.test/pr/1");
+  assert.equal(completed?.status, "completed");
+  assert.equal((await service.completeMergedPullRequest("org/repo", "orqestra/7", "https://example.test/pr/1"))?.status, "completed");
+  assert.deepEqual(notifications, ["work_started", "change_ready", "pr_ready", "completed"]);
 });
 
 test("notification failures never block delivery state transitions", async () => {

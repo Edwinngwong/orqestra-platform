@@ -94,9 +94,19 @@ export class Orchestrator {
 
   audit(runId: string) { return this.store.audit(runId); }
 
+  async completeMergedPullRequest(repository: string, branch: string, pullRequestUrl: string, actor = "github"): Promise<Run | undefined> {
+    const run = (await this.store.list(1000)).find(value => value.workItem.repository.toLowerCase() === repository.toLowerCase() && value.branch === branch && value.pullRequestUrl === pullRequestUrl);
+    if (!run) return undefined;
+    if (run.status === "completed") return structuredClone(run);
+    if (run.status !== "draft_pr_open") throw new Error(`Cannot complete merged pull request from ${run.status}`);
+    run.status = "completed";
+    await this.store.put(run); await this.record(run.id, "pull_request_merged", actor); await this.notify(run, "completed");
+    return structuredClone(run);
+  }
+
   async cancel(runId: string, actor = "human"): Promise<Run> {
     const run = await this.get(runId);
-    if (["draft_pr_open", "cancelled"].includes(run.status)) throw new Error(`Cannot cancel from ${run.status}`);
+    if (["draft_pr_open", "completed", "cancelled"].includes(run.status)) throw new Error(`Cannot cancel from ${run.status}`);
     run.status = "cancelled";
     await this.store.put(run);
     await this.record(run.id, "run_cancelled", actor);

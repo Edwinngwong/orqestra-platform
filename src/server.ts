@@ -68,7 +68,16 @@ export function createPlatformServer(orchestrator: Orchestrator, options: { webh
         const signature = request.headers["x-hub-signature-256"];
         const event = request.headers["x-github-event"];
         const deliveryId = request.headers["x-github-delivery"];
-        if (event !== "issues" || typeof deliveryId !== "string" || !verifyGitHubSignature(raw, typeof signature === "string" ? signature : undefined, options.webhookSecret)) return json(response, 401);
+        if (typeof deliveryId !== "string" || !verifyGitHubSignature(raw, typeof signature === "string" ? signature : undefined, options.webhookSecret)) return json(response, 401);
+        if (event === "pull_request") {
+          const payload = JSON.parse(raw.toString("utf8")) as { action?: string; pull_request?: { merged?: boolean; html_url?: string; head?: { ref?: string } }; repository?: { full_name?: string } };
+          if (payload.action !== "closed" || !payload.pull_request?.merged) return json(response, 202);
+          const repository = payload.repository?.full_name, branch = payload.pull_request.head?.ref, url = payload.pull_request.html_url;
+          if (!repository || !branch || !url) return json(response, 400, { error: "Incomplete pull request payload" });
+          const completed = await orchestrator.completeMergedPullRequest(repository, branch, url);
+          return json(response, 200, { completed: Boolean(completed), ...(completed ? { runId: completed.id } : {}) });
+        }
+        if (event !== "issues") return json(response, 202);
         const payload = JSON.parse(raw.toString("utf8")) as { issue?: { body?: string } };
         if (payload.issue?.body?.includes("<!-- orqestra-muse:")) return json(response, 202, { museManaged: true });
         const item = githubIssueToWorkItem(payload);
