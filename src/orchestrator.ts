@@ -1,12 +1,15 @@
 import type { CodingAgent, PullRequests, Run, Sandbox, WorkItem } from "./domain.js";
 import { MemoryRunStore, type RunStore } from "./store.js";
 
+export interface RunNotifier { notify(run: Run, event: string): Promise<void> }
+
 export class Orchestrator {
   constructor(
     private readonly agent: CodingAgent,
     private readonly sandbox: Sandbox,
     private readonly pullRequests: PullRequests,
     private readonly store: RunStore = new MemoryRunStore(),
+    private readonly notifier?: RunNotifier,
   ) {}
 
   async intake(item: WorkItem, deliveryId?: string): Promise<Run | undefined> {
@@ -29,6 +32,7 @@ export class Orchestrator {
     run.status = "queued";
     await this.store.put(run);
     await this.record(run.id, "intake_approved", actor);
+    await this.notify(run, "work_started");
     return structuredClone(run);
   }
 
@@ -45,11 +49,13 @@ export class Orchestrator {
       run.status = tests.passed ? "awaiting_pr_approval" : "tests_failed";
       await this.store.put(run);
       await this.record(run.id, tests.passed ? "tests_passed" : "tests_failed", "system");
+      await this.notify(run, tests.passed ? "change_ready" : "run_failed");
     } catch (error) {
       run.status = "failed";
       run.testSummary = error instanceof Error ? error.message : "Execution failed";
       await this.store.put(run);
       await this.record(run.id, "execution_failed", "system");
+      await this.notify(run, "run_failed");
     }
     return structuredClone(run);
   }
@@ -82,6 +88,7 @@ export class Orchestrator {
     run.status = "draft_pr_open";
     await this.store.put(run);
     await this.record(run.id, "draft_pr_approved", actor);
+    await this.notify(run, "pr_ready");
     return structuredClone(run);
   }
 
@@ -98,5 +105,10 @@ export class Orchestrator {
 
   private async record(runId: string, action: string, actor: string): Promise<void> {
     await this.store.appendAudit({ at: new Date().toISOString(), runId, action, actor });
+  }
+
+  private async notify(run: Run, event: string): Promise<void> {
+    try { await this.notifier?.notify(structuredClone(run), event); }
+    catch (error) { console.error("Run notification failed", error instanceof Error ? error.message : error); }
   }
 }

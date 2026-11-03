@@ -10,9 +10,9 @@ Do not use, request, reproduce, translate, or derive from any employer-proprieta
 
 ## Current milestone
 
-- Milestone: Recoverable WhatsApp Muse confirmation
-- Platform version: 0.7.1
-- Latest migration: 008_muse_run_source.sql
+- Milestone: WhatsApp delivery lifecycle notifications
+- Platform version: 0.8.0
+- Latest migration: 009_whatsapp_notification_outbox.sql
 - Compatible sandbox version: 0.2.x
 - Milestone status: complete and live-tested locally
 
@@ -38,6 +38,7 @@ Current capabilities:
 - Revocable phone-to-user/workspace/project bindings that stop working when membership is removed.
 - Outbound WhatsApp Cloud API replies and dashboard binding controls with masked phone numbers.
 - Live Meta validation completed for WABA app subscription, authorized inbound `@muse` delivery, proposal creation, and outbound proposal notification.
+- Configurable direct-message trigger prefixes and durable, retryable WhatsApp notifications for work start, passing tests, draft PR readiness, and failures.
 - Public privacy, terms, and data-deletion pages for Meta app publication, with a project-owned app icon.
 - One-command local start/status/stop with automatic Cloudflare quick-tunnel webhook updates.
 - Direct WhatsApp proposal-review URLs load the operator console correctly when the `muse` query parameter is present; regression-tested after a persistent local restart.

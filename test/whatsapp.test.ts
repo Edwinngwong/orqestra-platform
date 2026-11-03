@@ -24,6 +24,27 @@ test("extracts only explicit bounded @muse text messages", () => {
   assert.deepEqual(extractMuseMessages(payload, "https://muse.example"), [{ id: "wamid.1", senderWaId: "15550100", businessPhoneNumberId: "1001", text: "fix checkout", publicBaseUrl: "https://muse.example" }]);
 });
 
+test("accepts configurable direct-message trigger prefixes", () => {
+  const messages = ["/muse fix checkout", "muse: improve search", "normal conversation"].map((body, index) => ({ id: `wamid.${index}`, from: "15550100", type: "text", text: { body } }));
+  const payload = { object: "whatsapp_business_account", entry: [{ changes: [{ value: { metadata: { phone_number_id: "1001" }, messages } }] }] };
+  assert.deepEqual(extractMuseMessages(payload, "https://muse.example", ["/muse", "muse:"]).map(value => value.text), ["fix checkout", "improve search"]);
+  assert.deepEqual(extractMuseMessages(payload, "https://muse.example", ["@orqestra"]), []);
+});
+
+test("reactivates a revoked WhatsApp number for a different project", async () => {
+  const store = new MemoryWhatsAppStore();
+  const original = await store.createBinding({ workspaceId: "workspace-1", projectId: "project-1", requesterId: "user-1", senderWaId: "15550100", businessPhoneNumberId: "1001" });
+  await store.deactivateBinding(original.id);
+
+  const rebound = await store.createBinding({ workspaceId: "workspace-1", projectId: "project-2", requesterId: "user-1", senderWaId: "15550100", businessPhoneNumberId: "1001" });
+
+  assert.equal(rebound.id, original.id);
+  assert.equal(rebound.active, true);
+  assert.equal(rebound.projectId, "project-2");
+  assert.equal((await store.listBindings()).length, 1);
+  await assert.rejects(() => store.createBinding({ workspaceId: "workspace-1", projectId: "project-3", requesterId: "user-1", senderWaId: "15550100", businessPhoneNumberId: "1001" }), /already bound/);
+});
+
 test("interprets an authorized WhatsApp request into a Muse proposal and reply", async () => {
   const projects = new MemoryProjectRegistry(); const workspace = await projects.createWorkspace({ name: "Acme", slug: "acme" });
   const project = await projects.createProject({ workspaceId: workspace.id, name: "App", repository: "acme/app", defaultBranch: "main", githubInstallationId: 12, tracker: "orqestra_only", policy: { testCommand: ["npm", "test"], timeoutSeconds: 300, maxChangedFiles: 10, maxChangedBytes: 100_000, protectedPaths: [".github"] } });
@@ -43,6 +64,24 @@ test("interprets an authorized WhatsApp request into a Muse proposal and reply",
 test("asks for clarification and rejects invalid model output", async () => {
   assert.throws(() => parseMuseInterpretation({ ready: true, title: "", objective: "", acceptanceCriteria: [], constraints: [], clarificationQuestion: "" }), /incomplete/);
   assert.equal(parseMuseInterpretation({ ready: false, title: "", objective: "", acceptanceCriteria: [], constraints: [], clarificationQuestion: "Which screen?" }).clarificationQuestion, "Which screen?");
+});
+
+test("sends WhatsApp updates for a routed Muse run", async () => {
+  const projects = new MemoryProjectRegistry(); const workspace = await projects.createWorkspace({ name: "Acme", slug: "acme-notifications" });
+  const project = await projects.createProject({ workspaceId: workspace.id, name: "App", repository: "acme/app", defaultBranch: "main", githubInstallationId: 12, tracker: "orqestra_only", policy: { testCommand: ["npm", "test"], timeoutSeconds: 300, maxChangedFiles: 10, maxChangedBytes: 100_000, protectedPaths: [".github"] } });
+  const orchestrator = new Orchestrator({ async implement() { throw new Error("not called"); } }, { async runTests() { throw new Error("not called"); } }, { async createDraft() { throw new Error("not called"); } });
+  const muse = new MuseService(new MemoryMuseStore(), { async create() { return undefined; } }, orchestrator); const store = new MemoryWhatsAppStore(); const replies: string[] = [];
+  const requesterId = crypto.randomUUID();
+  await store.createBinding({ workspaceId: workspace.id, projectId: project.id, requesterId, senderWaId: "15550100", businessPhoneNumberId: "1001" });
+  const proposal = await muse.propose({ workspaceId: workspace.id, projectId: project.id, channel: "whatsapp", sourceReference: "wamid.notify", requesterId, title: "Fix greeting", objective: "Use local time", acceptanceCriteria: ["Greeting is correct"], constraints: [] }, project);
+  const routed = await muse.confirm(proposal.id, "reviewer", project); assert(routed.runId);
+  let transientFailure = true;
+  const service = new WhatsAppMuseService(store, projects, muse, { async interpret() { throw new Error("not called"); } }, { async sendText(_to, text) { if (transientFailure) { transientFailure = false; throw new Error("Meta unavailable"); } replies.push(text); return "wamid.reply"; } });
+  const run = await orchestrator.get(routed.runId); run.pullRequestUrl = "https://github.example/acme/app/pull/1"; run.testSummary = "all passed";
+  await service.notifyRun(run, "work_started"); await service.notifyRun(run, "work_started"); await service.notifyRun(run, "change_ready"); await service.notifyRun(run, "pr_ready"); await service.notifyRun({ ...run, testSummary: "tests failed" }, "run_failed");
+  for (let attempt = 0; attempt < 5; attempt++) assert.equal(await service.processNextNotification(), true);
+  assert.equal(await service.processNextNotification(), false);
+  assert.match(replies[0]!, /started work/); assert.match(replies[1]!, /tests passed/); assert.match(replies[2]!, /pull\/1/); assert.match(replies[3]!, /tests failed/);
 });
 
 test("sends bounded text through the WhatsApp Cloud API", async () => {

@@ -4,10 +4,13 @@ import { Orchestrator } from "../src/orchestrator.js";
 
 test("requires both human approvals before opening a draft PR", async () => {
   let prCalls = 0;
+  const notifications: string[] = [];
   const service = new Orchestrator(
     { async implement() { return { branch: "orqestra/7", commit: "abcdef1", summary: "implemented" }; } },
     { async runTests() { return { passed: true, summary: "all passed" }; } },
     { async createDraft() { prCalls += 1; return "https://example.test/pr/1"; } },
+    undefined,
+    { async notify(_run, event) { notifications.push(event); } },
   );
   const run = await service.intake({ id: "7", source: "github", title: "Change", description: "Do it", repository: "org/repo", defaultBranch: "main" });
   assert(run);
@@ -19,6 +22,20 @@ test("requires both human approvals before opening a draft PR", async () => {
   const opened = await service.approveDraftPullRequest(run.id);
   assert.equal(opened.status, "draft_pr_open");
   assert.equal(prCalls, 1);
+  assert.deepEqual(notifications, ["work_started", "change_ready", "pr_ready"]);
+});
+
+test("notification failures never block delivery state transitions", async () => {
+  const service = new Orchestrator(
+    { async implement() { return { branch: "orqestra/10", commit: "abcdef3", summary: "implemented" }; } },
+    { async runTests() { return { passed: true, summary: "all passed" }; } },
+    { async createDraft() { return "https://example.test/pr/10"; } },
+    undefined,
+    { async notify() { throw new Error("provider unavailable"); } },
+  );
+  const run = await service.intake({ id: "10", source: "muse", title: "Change", description: "Do it", repository: "org/repo", defaultBranch: "main" }); assert(run);
+  assert.equal((await service.approveIntake(run.id)).status, "queued");
+  assert.equal((await service.execute(run.id)).status, "awaiting_pr_approval");
 });
 
 test("does not offer a PR when tests fail", async () => {

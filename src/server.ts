@@ -262,18 +262,21 @@ if (process.env.NODE_ENV !== "test") {
   if (!webhookSecret || !operatorToken || !appId || !keyPath || !openaiKey || !model || !sandboxUrl || !sandboxToken || !signingSecret) throw new Error("Platform integration environment is incomplete; see .env.example");
   const services = await servicesFromEnvironment();
   const tokens = new GitHubAppTokens(appId, await readFile(keyPath, "utf8"));
+  let whatsapp: WhatsAppMuseService | undefined;
   const orchestrator = new Orchestrator(
     new OpenAIGitHubAgent(tokens, openaiKey, model),
     new SandboxHttpClient(sandboxUrl, sandboxToken, signingSecret, id => tokens.installationToken(id)),
     new GitHubPullRequests(id => tokens.installationToken(id)),
     services.store,
+    { async notify(run, event) { await whatsapp?.notifyRun(run, event); } },
   );
   const jira = process.env.JIRA_BASE_URL && process.env.JIRA_EMAIL && process.env.JIRA_API_TOKEN ? { baseUrl: process.env.JIRA_BASE_URL, email: process.env.JIRA_EMAIL, apiToken: process.env.JIRA_API_TOKEN } : undefined;
   const muse = new MuseService(services.museStore, new RoutedWorkTracker(id => tokens.installationToken(id), jira), orchestrator);
   const publicBaseUrl = process.env.WHATSAPP_PUBLIC_BASE_URL || process.env.ORQESTRA_PUBLIC_URL;
   const whatsappReady = process.env.WHATSAPP_APP_SECRET && process.env.WHATSAPP_VERIFY_TOKEN && process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID && publicBaseUrl;
-  const whatsapp = whatsappReady ? new WhatsAppMuseService(services.whatsappStore, services.projects, muse, new OpenAIMuseInterpreter(openaiKey, model), new WhatsAppCloudClient(process.env.WHATSAPP_PHONE_NUMBER_ID!, process.env.WHATSAPP_ACCESS_TOKEN!, process.env.WHATSAPP_GRAPH_VERSION ?? "v25.0")) : undefined;
-  if (whatsapp) { await whatsapp.recover(); setInterval(() => whatsapp.processNext().catch(error => console.error("WhatsApp worker failed", error)), 2_000).unref(); }
+  const triggers = (process.env.WHATSAPP_MUSE_TRIGGERS ?? "@muse,/muse,muse:").split(",").map(value => value.trim()).filter(Boolean);
+  whatsapp = whatsappReady ? new WhatsAppMuseService(services.whatsappStore, services.projects, muse, new OpenAIMuseInterpreter(openaiKey, model), new WhatsAppCloudClient(process.env.WHATSAPP_PHONE_NUMBER_ID!, process.env.WHATSAPP_ACCESS_TOKEN!, process.env.WHATSAPP_GRAPH_VERSION ?? "v25.0"), triggers) : undefined;
+  if (whatsapp) { await whatsapp.recover(); setInterval(() => Promise.all([whatsapp!.processNext(), whatsapp!.processNextNotification()]).catch(error => console.error("WhatsApp worker failed", error)), 2_000).unref(); }
   const port = Number(process.env.PORT ?? 8786);
   createPlatformServer(orchestrator, { webhookSecret, operatorToken, ...(process.env.WHATSAPP_APP_SECRET ? { whatsappAppSecret: process.env.WHATSAPP_APP_SECRET } : {}), ...(process.env.WHATSAPP_VERIFY_TOKEN ? { whatsappVerifyToken: process.env.WHATSAPP_VERIFY_TOKEN } : {}), ...(process.env.WHATSAPP_PHONE_NUMBER_ID ? { whatsappPhoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID } : {}), ...(publicBaseUrl ? { publicBaseUrl } : {}) }, services.queue, services.projects, tokens, services.auth, muse, whatsapp).listen(port, () => console.log(`Orqestra platform listening on ${port}`));
 }

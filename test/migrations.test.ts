@@ -30,6 +30,12 @@ test("WhatsApp bindings and durable inbox are migrated", { skip: !process.env.TE
   } finally { await pool.end(); }
 });
 
+test("WhatsApp lifecycle notifications use a durable outbox", { skip: !process.env.TEST_DATABASE_URL }, async () => {
+  const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  try { const result = await pool.query("SELECT to_regclass('public.whatsapp_notifications') AS table_name"); assert.equal(result.rows[0]?.table_name, "whatsapp_notifications"); }
+  finally { await pool.end(); }
+});
+
 test("runs accept Muse as a durable intake source", { skip: !process.env.TEST_DATABASE_URL }, async () => {
   const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
   try {
