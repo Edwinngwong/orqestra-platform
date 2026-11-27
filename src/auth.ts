@@ -62,7 +62,7 @@ export class AuthService {
     await this.pool.query("DELETE FROM user_sessions WHERE expires_at<=now()");
     await this.pool.query("INSERT INTO user_sessions(token_hash,csrf_hash,user_id,expires_at) VALUES($1,$2,$3,now()+interval '12 hours')", [digest(token), csrfToken, user.id]);
     const memberships = await this.pool.query('SELECT workspace_id AS "workspaceId",role FROM workspace_memberships WHERE user_id=$1', [user.id]);
-    return { cookie: `orqestra_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200`, csrfToken, user: { id: user.id, email: user.email, mustChangePassword: user.mustChangePassword, roles: memberships.rows } };
+    return { cookie: `orqestra_session=${encodeURIComponent(token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200`, csrfToken, user: { id: user.id, email: user.email, mustChangePassword: user.mustChangePassword, roles: memberships.rows } };
   }
   validateCsrf(request: IncomingMessage, principal: Principal): boolean {
     if (principal.system) return true;

@@ -10,16 +10,16 @@ Do not use, request, reproduce, translate, or derive from any employer-proprieta
 
 ## Current milestone
 
-- Milestone: WhatsApp delivery lifecycle notifications
-- Platform version: 0.8.0
-- Latest migration: 009_whatsapp_notification_outbox.sql
+- Milestone: Client site, GitHub authorization, and new-project activation
+- Platform version: 0.11.0
+- Latest migration: 012_new_project_activation.sql
 - Compatible sandbox version: 0.2.x
-- Milestone status: complete and live-tested locally
+- Milestone status: GitHub CI passing; live GitHub OAuth acceptance and public deployment pending
 
 Current capabilities:
 
 - Signed GitHub issue webhooks with delivery replay protection.
-- Explicit workspace and project onboarding.
+- Explicit workspace and project onboarding, including a customer-facing choice between connecting an existing GitHub repository and requesting a new project from scratch.
 - GitHub App repository discovery using short-lived installation tokens.
 - Durable PostgreSQL runs, audit events, jobs, leases, retries, and cancellation.
 - One bounded OpenAI coding agent that creates a branch and commit through GitHub APIs.
@@ -28,7 +28,11 @@ Current capabilities:
 - Two durable human approval gates; draft PR creation only; no merge capability.
 - Email/password users with salted scrypt hashes, forced temporary-password replacement, opaque HttpOnly sessions, CSRF protection, and workspace roles.
 - Owner, admin, reviewer, and viewer authorization enforced by the API.
+- Public marketing page at `/`, authenticated client workflow dashboard at `/app`, plus `/operator` and Muse deep-link compatibility.
+- Workspace-filtered project cards, approval counts, stage-by-stage workflow history, and explicit new/existing project onboarding.
+- GitHub user-to-server OAuth proof, one-time session-bound state, GitHub-admin repository grants, workspace-only installation discovery, and guarded disconnects.
 - Local operator dashboard for onboarding, runs, audits, approvals, retries, cancellation, members, and PR links.
+- Durable new-project intake requests scoped to workspaces, with customer-owned or Orqestra-managed hosting preference and optional monthly budget. New-project intake cannot provision cloud resources or execute work. An admin may activate a request only by assigning a verified, customer-authorized GitHub repository; PostgreSQL activation is transactional and single-use.
 - Channel-independent Muse proposals with explicit reviewer confirmation and durable provenance.
 - Per-project routing to GitHub Issues, Jira, or Orqestra-only tracking while keeping the code host independent.
 - Dashboard support for tracker selection, Muse proposal review, confirmation, and external ticket links.
@@ -50,9 +54,12 @@ Known gaps before broad production use:
 - Inline diff review, usage metering, budgets, and customer billing.
 - Slack, Teams, and email channel adapters.
 - Production WhatsApp system-user token lifecycle, business verification, permanent HTTPS hosting, rate limits, retention controls, and operational alerting.
+- Live GitHub user-to-server OAuth callbacks and installation permission-change handling must be verified before hosted customer onboarding.
+- Pre-0.10 projects must be reconciled with verified GitHub connections before new repository assignments.
 - Jira OAuth/installation management; the current Jira adapter uses runtime-held service credentials.
 - Azure DevOps/GitLab code-host integrations.
 - Cloud-native ephemeral execution; the current Docker executor is local-development only.
+- Automated repository creation, infrastructure provisioning, and new-project approval conversion after the new-project intake is reviewed.
 - Production deployment, observability, backups, disaster recovery, retention, and incident controls.
 
 ## Repository responsibility
@@ -60,7 +67,7 @@ Known gaps before broad production use:
 This repository is the control plane. It owns:
 
 - HTTP webhook and authenticated operator APIs.
-- Workspace, project, identity, role, run, audit, and job persistence.
+- Workspace, project, new-project intake, identity, role, run, audit, and job persistence.
 - Orchestration state transitions and human approval enforcement.
 - GitHub App authentication, repository discovery, branches, commits, and draft PRs.
 - OpenAI Responses API integration and deterministic output validation.
@@ -74,7 +81,10 @@ It does not execute untrusted repository commands. That belongs to `orqestra-san
 - `src/server.ts`: HTTP routing, authentication boundary, authorization, webhook intake.
 - `src/orchestrator.ts`: run state machine and approval invariants.
 - `src/auth.ts`: password hashing, sessions, CSRF, and workspace roles.
-- `src/projects.ts`: workspace/project registry.
+- `src/projects.ts`: workspace/project registry and durable new-project intake requests.
+- `src/github-connections.ts`: OAuth challenge verification and workspace-to-installation grants.
+- `src/ui/landing.ts`: public product page and client portal navigation.
+- `docs/ONBOARDING_ARCHITECTURE.md`: dual-mode onboarding boundaries, trust model, and production readiness.
 - `src/muse.ts`: canonical proposal persistence, confirmation, tracker routing, and run creation.
 - `src/adapters/trackers.ts`: GitHub Issue, Jira, and Orqestra-only tracker adapters.
 - `src/whatsapp.ts`: signed webhook intake, durable message queue, authorization bindings, and Muse processing.
@@ -100,6 +110,10 @@ It does not execute untrusted repository commands. That belongs to `orqestra-san
 - Preserve protected-path, file-count, byte-count, timeout, and command-policy enforcement.
 - Only signed passing sandbox results may reach `awaiting_pr_approval`.
 - Enforce workspace authorization on the server, not only by hiding UI controls.
+- Never expose global GitHub App installations in customer sessions; filter repository selection by OAuth-verified workspace grants.
+- OAuth authorization states expire quickly, are session-bound and single-use. Never store GitHub user access tokens.
+- Never treat a new-project intake as authorization to create resources, spend money, execute code, or trigger a deployment.
+- New-project activation must bind an already authorized repository and occur once, atomically, without skipping existing delivery approvals.
 - Ignore ordinary WhatsApp conversation; only explicit `@muse` messages enter the durable inbox.
 - Never process a WhatsApp sender without an active binding and current workspace membership.
 - A WhatsApp message may create only a proposal; it cannot confirm, approve intake, approve a PR, or merge.
@@ -139,6 +153,8 @@ Before committing:
 - Run `git diff --check` and inspect the diff for secrets.
 - Apply migrations to a preserved database and verify existing runs/audits remain accessible.
 - For workflow changes, prove issue -> intake approval -> branch -> isolated tests -> PR approval -> draft PR.
+- For dual-mode onboarding, test tenant isolation, role enforcement, request validation, and that new-project intake creates no executable project.
+- For GitHub connections, test bad state, replay, wrong user/session, insufficient repository admin rights, and cross-tenant installation conflicts.
 
 ## Cross-repository contract
 

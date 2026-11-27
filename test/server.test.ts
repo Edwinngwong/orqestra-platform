@@ -3,6 +3,8 @@ import { createHmac } from "node:crypto";
 import test from "node:test";
 import { Orchestrator } from "../src/orchestrator.js";
 import { MemoryProjectRegistry } from "../src/projects.js";
+import { MemoryGitHubConnectionRegistry } from "../src/github-connections.js";
+import type { GitHubAppTokens } from "../src/adapters/github.js";
 
 process.env.NODE_ENV = "test";
 const { createPlatformServer } = await import("../src/server.js");
@@ -79,6 +81,147 @@ test("serves the operator console when a Muse proposal query is present", async 
   try {
     const response = await fetch(`http://127.0.0.1:${address.port}/?muse=60f3c9a5-bb09-4087-a779-78df0b6875b5`);
     assert.equal(response.status, 200);
-    assert.match(await response.text(), /ORQESTRA/);
+    assert.match(await response.text(), /id="login-form"/);
+  } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+});
+
+test("new-project requests validate inputs and do not create repositories or run workflows", async () => {
+  const orchestrator = new Orchestrator(
+    { async implement() { throw new Error("not called"); } },
+    { async runTests() { throw new Error("not called"); } },
+    { async createDraft() { throw new Error("not called"); } },
+  );
+  const registry = new MemoryProjectRegistry();
+  const server = createPlatformServer(orchestrator, { webhookSecret: "secret", operatorToken: "operator-secret" }, undefined, registry);
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address(); assert(address && typeof address === "object");
+  const base = `http://127.0.0.1:${address.port}`;
+  const headers = { authorization: "Bearer operator-secret", "content-type": "application/json" };
+  try {
+    const workspace = await registry.createWorkspace({ name: "Acme", slug: "acme" });
+    const valid = { workspaceId: workspace.id, name: "Booking Platform", goal: "Customers can book and manage their appointments.", ownershipMode: "orqestra_managed" };
+    assert.equal((await fetch(`${base}/v1/new-project-intakes`)).status, 401);
+    for (const change of [
+      { goal: "short" }, { name: "" }, { ownershipMode: "unknown" },
+      { monthlyBudgetUsd: 0 }, { monthlyBudgetUsd: 1.5 }, { monthlyBudgetUsd: 100001 },
+    ]) {
+      const response = await fetch(`${base}/v1/new-project-intakes`, { method: "POST", headers, body: JSON.stringify({ ...valid, ...change }) });
+      assert.equal(response.status, 400, await response.text());
+    }
+    const response = await fetch(`${base}/v1/new-project-intakes`, { method: "POST", headers, body: JSON.stringify(valid) });
+    assert.equal(response.status, 201);
+    const item = await response.json() as { id: string; requestedBy: string; status: string };
+    assert.equal(item.status, "pending_review");
+    assert.equal(item.requestedBy, "local-operator");
+    const listed = await fetch(`${base}/v1/new-project-intakes?workspaceId=${workspace.id}`, { headers });
+    assert.equal(listed.status, 200);
+    assert.deepEqual((await listed.json() as Array<{ id: string }>).map(value => value.id), [item.id]);
+    assert.deepEqual(await (await fetch(`${base}/v1/projects`, { headers })).json(), []);
+    assert.deepEqual(await (await fetch(`${base}/v1/runs`, { headers })).json(), []);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
+test("public home is marketing while /app and Muse deep links open client portal", async () => {
+  const orch = new Orchestrator(
+    { async implement() { throw new Error("not called"); } }, { async runTests() { throw new Error("not called"); } },
+    { async createDraft() { throw new Error("not called"); } },
+  );
+  const server = createPlatformServer(orch, { webhookSecret: "secret", operatorToken: "operator-secret" });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address(); assert(address && typeof address === "object");
+  const base = `http://127.0.0.1:${address.port}`;
+  try {
+    const landing = await fetch(base);
+    assert.match(await landing.text(), /Start a new project/);
+    assert.equal(landing.headers.get("cache-control"), "no-store");
+    const app = await fetch(base + "/app");
+    assert.match(await app.text(), /id="login-form"/);
+    const museLink = await fetch(base + "/?muse=60f3c9a5-bb09-4087-a779-78df0b6875b5");
+    assert.match(await museLink.text(), /id="login-form"/);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
+test("workspace GitHub connections restrict repository discovery and project registration", async () => {
+  const registry = new MemoryProjectRegistry();
+  const a = await registry.createWorkspace({ name: "Acme", slug: "acme" });
+  const b = await registry.createWorkspace({ name: "Other", slug: "other" });
+  const grants = new MemoryGitHubConnectionRegistry();
+  await grants.saveConnection({ workspaceId: a.id, installationId: 123, accountLogin: "acme",
+    repositories: [{ repository: "acme/portal", defaultBranch: "main" }], connectedBy: "owner", connectedAt: new Date().toISOString() });
+  const github = { async repositoriesForInstallation(id: number) {
+    assert.equal(id, 123);
+    return [{ installationId: 123, repository: "acme/portal", defaultBranch: "main" },
+      { installationId: 123, repository: "acme/secret", defaultBranch: "main" }];
+  }} as unknown as GitHubAppTokens;
+  const orch = new Orchestrator(
+    { async implement() { throw new Error("not called"); } }, { async runTests() { throw new Error("not called"); } },
+    { async createDraft() { throw new Error("not called"); } },
+  );
+  const server = createPlatformServer(orch, { webhookSecret: "secret", operatorToken: "operator-secret" },
+    undefined, registry, github, undefined, undefined, undefined, grants);
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address(); assert(address && typeof address === "object");
+  const base = `http://127.0.0.1:${address.port}`;
+  const headers = { authorization: "Bearer operator-secret", "content-type": "application/json" };
+  try {
+    assert.equal((await fetch(base + "/v1/github/repositories", { headers })).status, 403);
+    const result = await fetch(base + "/v1/github/repositories?workspaceId=" + a.id, { headers });
+    assert.equal(result.status, 200);
+    assert.deepEqual(await result.json(), [{ installationId: 123, repository: "acme/portal", defaultBranch: "main" }]);
+    const noAccess = await fetch(base + "/v1/github/repositories?workspaceId=" + b.id, { headers });
+    assert.deepEqual(await noAccess.json(), []);
+    const input = { workspaceId: b.id, name: "Oops", repository: "acme/portal", githubInstallationId: 123 };
+    const denied = await fetch(base + "/v1/projects", { method: "POST", headers, body: JSON.stringify(input) });
+    assert.equal(denied.status, 403);
+    const wrongRepo = await fetch(base + "/v1/projects", { method: "POST", headers,
+      body: JSON.stringify({ ...input, workspaceId: a.id, repository: "acme/secret" }) });
+    assert.equal(wrongRepo.status, 403);
+    const allowed = await fetch(base + "/v1/projects", { method: "POST", headers,
+      body: JSON.stringify({ ...input, workspaceId: a.id, name: "Portal" }) });
+    assert.equal(allowed.status, 201, await allowed.text());
+    const disconnect = await fetch(base + "/v1/github/connections/123?workspaceId=" + a.id, { method: "DELETE", headers });
+    assert.equal(disconnect.status, 409);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
+test("new-project activation requires an approved repository and links the intake exactly once", async () => {
+  const registry = new MemoryProjectRegistry();
+  const workspace = await registry.createWorkspace({ name: "New ideas", slug: "new-ideas" });
+  const intake = await registry.createNewProjectIntake({ workspaceId: workspace.id,
+    name: "Appointment portal", goal: "Customers should book appointments online.", ownershipMode: "customer_owned",
+    requestedBy: "owner@example.test" });
+  const grants = new MemoryGitHubConnectionRegistry();
+  await grants.saveConnection({ workspaceId: workspace.id, installationId: 45, accountLogin: "acme",
+    repositories: [{ repository: "acme/appointment-portal", defaultBranch: "main" }],
+    connectedBy: "owner", connectedAt: new Date().toISOString() });
+  const github = { async repositoriesForInstallation() {
+    return [{ installationId: 45, repository: "acme/appointment-portal", defaultBranch: "main" },
+      { installationId: 45, repository: "acme/private", defaultBranch: "main" }];
+  }} as unknown as GitHubAppTokens;
+  const orch = new Orchestrator({ async implement() { throw new Error("not called"); } },
+    { async runTests() { throw new Error("not called"); } }, { async createDraft() { throw new Error("not called"); } });
+  const server = createPlatformServer(orch, { webhookSecret: "secret", operatorToken: "operator-secret" },
+    undefined, registry, github, undefined, undefined, undefined, grants);
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address(); assert(address && typeof address === "object");
+  const base = `http://127.0.0.1:${address.port}`, headers = { authorization: "Bearer operator-secret", "content-type": "application/json" };
+  const path = `${base}/v1/new-project-intakes/${intake.id}/activate`;
+  try {
+    const input = { workspaceId: workspace.id, repository: "acme/private", githubInstallationId: 45 };
+    assert.equal((await fetch(path, { method: "POST", headers, body: JSON.stringify(input) })).status, 403);
+    const approved = await fetch(path, { method: "POST", headers,
+      body: JSON.stringify({ ...input, repository: "acme/appointment-portal" }) });
+    assert.equal(approved.status, 201, await approved.text());
+    const result = await registry.listNewProjectIntakes(workspace.id);
+    assert.equal(result[0]?.status, "activated");
+    assert.equal((await registry.listProjects(workspace.id))[0]?.name, "Appointment portal");
+    assert.equal((await fetch(path, { method: "POST", headers,
+      body: JSON.stringify({ ...input, repository: "acme/appointment-portal" }) })).status, 409);
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 });
