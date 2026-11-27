@@ -13,6 +13,8 @@ test("operator dashboard ships syntactically valid Muse, tracker, and WhatsApp c
   assert.match(operatorHtml, /id="github-connect-form"/);
   assert.match(operatorHtml, /id="workspace-filter"/);
   assert.match(operatorHtml, /id="workflow-timeline"/);
+  assert.match(operatorHtml, /Continue setup/);
+  assert.match(operatorHtml, /id="submit-project"/);
   assert.match(operatorHtml, /id="projects-grid"/);
   assert.match(operatorHtml, /id="new-project-intakes"/);
   assert.match(operatorHtml, /Start a new project instead/);
