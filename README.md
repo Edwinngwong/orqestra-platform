@@ -117,7 +117,7 @@ The model response is bounded to 20 files and 1 MB, rejects absolute/traversal p
 
 For a live acceptance run, follow [the live setup checklist](docs/LIVE_SETUP.md). `scripts/bootstrap-local.sh` generates all non-provider secrets into an ignored, mode-0600 `.env.local` file.
 
-## Dual-mode customer onboarding (0.10.0)
+## Dual-mode customer onboarding (0.11.0)
 
 Orqestra now offers two entry points in the operator dashboard. Both operate under
 the existing workspace authorization and project boundary:
@@ -141,13 +141,20 @@ New-project requests are accessible through:
   `ownershipMode` (`customer_owned` or `orqestra_managed`), and optional
   `monthlyBudgetUsd` (positive integer).
 
+Once an admin has connected an approved GitHub repository to the workspace, the
+**Continue setup** action can activate the original new-project request via
+`POST /v1/new-project-intakes/:id/activate`. Activation creates the executable
+project registration and marks the intake `activated` in one transaction. It
+cannot be repeated; it does not create the repository or provision infrastructure.
+
 A new-project request is not a contract, a quote, a billable task, or permission
 to incur cloud costs. A separate approval, customer authorization, and managed
 provisioning workflow will be built before automated setup is supported. Do not
 enter secrets, credentials, or sensitive personal data into the project-goal field.
 
 Run `npm run db:migrate` after upgrading to apply
-`010_new_project_intakes.sql` and `011_workspace_github_connections.sql` without deleting existing projects or runs.
+`010_new_project_intakes.sql`, `011_workspace_github_connections.sql`, and
+`012_new_project_activation.sql` without deleting existing projects or runs.
 
 For the complete onboarding trust model and rollout requirements, read
 [`docs/ONBOARDING_ARCHITECTURE.md`](docs/ONBOARDING_ARCHITECTURE.md). GitHub App discovery now requires a workspace-verified connection. Production
