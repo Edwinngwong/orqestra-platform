@@ -69,3 +69,40 @@ test("new project intake records are durable and isolated from executable projec
     await pool.end();
   }
 });
+
+test("GitHub OAuth state and installation grants have tenant-scoped persistence", { skip: !process.env.TEST_DATABASE_URL }, async () => {
+  const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  try {
+    const schema = await pool.query("SELECT to_regclass('public.github_connection_oauth_states') AS states, to_regclass('public.workspace_github_connections') AS connections");
+    assert.equal(schema.rows[0].states, "github_connection_oauth_states");
+    assert.equal(schema.rows[0].connections, "workspace_github_connections");
+    const { PostgresGitHubConnectionRegistry } = await import("../src/github-connections.js");
+    const { AuthService } = await import("../src/auth.js");
+    const registry = new PostgresGitHubConnectionRegistry(pool), auth = new AuthService(pool);
+    const suffix = crypto.randomUUID().slice(0, 8);
+    const { PostgresProjectRegistry } = await import("../src/projects.js");
+    const projects = new PostgresProjectRegistry(pool);
+    const workspace = await projects.createWorkspace({ name: "GitHub scope " + suffix, slug: "github-" + suffix });
+    const userId = await auth.createUser(`github-${suffix}@example.test`, "temporary-test-pass-123!", false);
+    try {
+      const stateHash = crypto.randomUUID();
+      await registry.startChallenge({ stateHash, workspaceId: workspace.id, userId, sessionHash: "session",
+        installationId: 456, expiresAt: new Date(Date.now() + 60_000) });
+      assert.equal((await registry.consumeChallenge(stateHash, userId, "other")), undefined);
+      assert.equal((await registry.consumeChallenge(stateHash, userId, "session"))?.installationId, 456);
+      assert.equal((await registry.consumeChallenge(stateHash, userId, "session")), undefined);
+      const connection = { workspaceId: workspace.id, installationId: 456, accountLogin: "acme",
+        repositories: [{ repository: "acme/portal", defaultBranch: "main" }], connectedBy: userId, connectedAt: new Date().toISOString() };
+      await registry.saveConnection(connection);
+      assert.equal((await registry.getConnection(workspace.id, 456))?.repositories[0]?.repository, "acme/portal");
+      assert.equal(await registry.getConnection(crypto.randomUUID(), 456), undefined);
+      assert.equal(await registry.removeConnection(crypto.randomUUID(), 456), false);
+      assert.equal(await registry.removeConnection(workspace.id, 456), true);
+    } finally {
+      await pool.query("DELETE FROM workspaces WHERE id=$1", [workspace.id]);
+      await pool.query("DELETE FROM users WHERE id=$1", [userId]);
+    }
+  } finally {
+    await pool.end();
+  }
+});
