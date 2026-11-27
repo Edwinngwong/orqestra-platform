@@ -13,7 +13,8 @@ export interface CreateNewProjectIntake {
 }
 export interface NewProjectIntake extends CreateNewProjectIntake {
   id: string;
-  status: "pending_review";
+  status: "pending_review" | "activated";
+  activatedProjectId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -26,6 +27,7 @@ export interface ProjectRegistry {
   findByRepository(repository: string): Promise<Project | undefined>;
   listNewProjectIntakes(workspaceId?: string): Promise<NewProjectIntake[]>;
   createNewProjectIntake(input: CreateNewProjectIntake): Promise<NewProjectIntake>;
+  activateNewProjectIntake(intakeId: string, input: CreateProject): Promise<{ intake: NewProjectIntake; project: Project }>;
 }
 
 function mapProject(row: Record<string, unknown>): Project {
@@ -42,7 +44,8 @@ function mapIntake(row: Record<string, unknown>): NewProjectIntake {
     id: String(row.id), workspaceId: String(row.workspaceId), name: String(row.name),
     goal: String(row.goal), ownershipMode: row.ownershipMode as OwnershipMode,
     ...(row.monthlyBudgetUsd === null || row.monthlyBudgetUsd === undefined ? {} : { monthlyBudgetUsd: Number(row.monthlyBudgetUsd) }),
-    requestedBy: String(row.requestedBy), status: "pending_review",
+    requestedBy: String(row.requestedBy), status: row.status as "pending_review" | "activated",
+    ...(row.activatedProjectId ? { activatedProjectId: String(row.activatedProjectId) } : {}),
     createdAt: new Date(row.createdAt as string | Date).toISOString(),
     updatedAt: new Date(row.updatedAt as string | Date).toISOString(),
   };
@@ -71,15 +74,38 @@ export class PostgresProjectRegistry implements ProjectRegistry {
     return result.rows[0] && mapProject(result.rows[0]);
   }
   async listNewProjectIntakes(workspaceId?: string): Promise<NewProjectIntake[]> {
-    const result = await this.pool.query(`SELECT id,workspace_id AS "workspaceId",name,goal,ownership_mode AS "ownershipMode",monthly_budget_usd AS "monthlyBudgetUsd",requested_by AS "requestedBy",status,created_at AS "createdAt",updated_at AS "updatedAt" FROM new_project_intakes ${workspaceId ? "WHERE workspace_id=$1" : ""} ORDER BY created_at DESC`, workspaceId ? [workspaceId] : []);
+    const result = await this.pool.query(`SELECT id,workspace_id AS "workspaceId",name,goal,ownership_mode AS "ownershipMode",monthly_budget_usd AS "monthlyBudgetUsd",requested_by AS "requestedBy",status,activated_project_id AS "activatedProjectId",created_at AS "createdAt",updated_at AS "updatedAt" FROM new_project_intakes ${workspaceId ? "WHERE workspace_id=$1" : ""} ORDER BY created_at DESC`, workspaceId ? [workspaceId] : []);
     return result.rows.map(mapIntake);
   }
   async createNewProjectIntake(input: CreateNewProjectIntake): Promise<NewProjectIntake> {
     const result = await this.pool.query(`INSERT INTO new_project_intakes(id,workspace_id,name,goal,ownership_mode,monthly_budget_usd,requested_by)
       VALUES($1,$2,$3,$4,$5,$6,$7)
-      RETURNING id,workspace_id AS "workspaceId",name,goal,ownership_mode AS "ownershipMode",monthly_budget_usd AS "monthlyBudgetUsd",requested_by AS "requestedBy",status,created_at AS "createdAt",updated_at AS "updatedAt"`,
+      RETURNING id,workspace_id AS "workspaceId",name,goal,ownership_mode AS "ownershipMode",monthly_budget_usd AS "monthlyBudgetUsd",requested_by AS "requestedBy",status,activated_project_id AS "activatedProjectId",created_at AS "createdAt",updated_at AS "updatedAt"`,
       [crypto.randomUUID(), input.workspaceId, input.name, input.goal, input.ownershipMode, input.monthlyBudgetUsd ?? null, input.requestedBy]);
     return mapIntake(result.rows[0]);
+  }
+  async activateNewProjectIntake(intakeId: string, input: CreateProject): Promise<{ intake: NewProjectIntake; project: Project }> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const rows = await client.query("SELECT id,status FROM new_project_intakes WHERE id=$1 AND workspace_id=$2 FOR UPDATE", [intakeId, input.workspaceId]);
+      if (!rows.rows[0] || rows.rows[0].status !== "pending_review") throw new Error("New-project request is missing, already activated, or belongs to another workspace");
+      const created = await client.query(`INSERT INTO projects(id,workspace_id,name,repository,default_branch,github_installation_id,policy,tracker_type,jira_project_key)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        RETURNING id,workspace_id AS "workspaceId",name,repository,default_branch AS "defaultBranch",github_installation_id AS "githubInstallationId",
+          policy,tracker_type AS tracker,jira_project_key AS "jiraProjectKey",created_at AS "createdAt",updated_at AS "updatedAt"`,
+        [crypto.randomUUID(),input.workspaceId,input.name,input.repository,input.defaultBranch,input.githubInstallationId,
+          input.policy,input.tracker ?? "github_issue",input.jiraProjectKey ?? null]);
+      const result = await client.query(`UPDATE new_project_intakes SET status='activated',activated_project_id=$2,updated_at=now()
+        WHERE id=$1 RETURNING id,workspace_id AS "workspaceId",name,goal,ownership_mode AS "ownershipMode",
+          monthly_budget_usd AS "monthlyBudgetUsd",requested_by AS "requestedBy",status,
+          activated_project_id AS "activatedProjectId",created_at AS "createdAt",updated_at AS "updatedAt"`,
+        [intakeId,created.rows[0].id]);
+      await client.query("COMMIT");
+      return { intake: mapIntake(result.rows[0]), project: mapProject(created.rows[0]) };
+    } catch (error) {
+      await client.query("ROLLBACK"); throw error;
+    } finally { client.release(); }
   }
 }
 
@@ -98,5 +124,15 @@ export class MemoryProjectRegistry implements ProjectRegistry {
     const value: NewProjectIntake = { ...input, id: crypto.randomUUID(), status: "pending_review", createdAt: now, updatedAt: now };
     this.intakes.push(value);
     return structuredClone(value);
+  }
+  async activateNewProjectIntake(intakeId: string, input: CreateProject) {
+    const intake = this.intakes.find(value => value.id === intakeId && value.workspaceId === input.workspaceId);
+    if (!intake || intake.status !== "pending_review") throw new Error("New-project request is missing, already activated, or belongs to another workspace");
+    if (this.projects.some(value => value.repository.toLowerCase() === input.repository.toLowerCase())) throw new Error("Repository is already registered");
+    const project = await this.createProject(input);
+    intake.status = "activated";
+    intake.activatedProjectId = project.id;
+    intake.updatedAt = new Date().toISOString();
+    return { intake: structuredClone(intake), project };
   }
 }
