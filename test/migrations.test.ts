@@ -43,3 +43,29 @@ test("runs accept Muse as a durable intake source", { skip: !process.env.TEST_DA
     assert.match(result.rows[0]?.definition ?? "", /'muse'/);
   } finally { await pool.end(); }
 });
+
+test("new project intake records are durable and isolated from executable projects", { skip: !process.env.TEST_DATABASE_URL }, async () => {
+  const pool = new Pool({ connectionString: process.env.TEST_DATABASE_URL });
+  try {
+    const table = await pool.query("SELECT to_regclass('public.new_project_intakes') AS name");
+    assert.equal(table.rows[0].name, "new_project_intakes");
+    const { PostgresProjectRegistry } = await import("../src/projects.js");
+    const registry = new PostgresProjectRegistry(pool);
+    const slug = `intake-${crypto.randomUUID().slice(0,8)}`;
+    const workspace = await registry.createWorkspace({ name: slug, slug });
+    try {
+      const intake = await registry.createNewProjectIntake({
+        workspaceId: workspace.id, name: "Payments portal", goal: "Allow customers to view their payment history.",
+        ownershipMode: "customer_owned", monthlyBudgetUsd: 250, requestedBy: "owner@example.test",
+      });
+      assert.equal(intake.status, "pending_review");
+      assert.equal(intake.monthlyBudgetUsd, 250);
+      assert.equal((await registry.listNewProjectIntakes(workspace.id))[0]?.id, intake.id);
+      assert.deepEqual(await registry.listProjects(workspace.id), []);
+    } finally {
+      await pool.query("DELETE FROM workspaces WHERE id=$1", [workspace.id]);
+    }
+  } finally {
+    await pool.end();
+  }
+});
