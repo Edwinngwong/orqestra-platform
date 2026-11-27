@@ -3,6 +3,18 @@
 This document describes Orqestra's independent customer-onboarding design. It is
 not a copy of an employer or customer system.
 
+## Website and dashboard
+
+The public landing page is available at `/`. Invite-only client accounts sign
+in at `/app` and see workspace-scoped project cards, workflow counts, active
+runs, outstanding approval requests, and auditable run progress. The existing
+operator dashboard is available at `/operator`. The public site does not
+expose project data; operational APIs require authentication and roles.
+
+There is no public account signup, billing, or automatic production deployment.
+Production requires invitation verification, account recovery, rate limits,
+mandatory HTTPS, retention policies, and operational support.
+
 ## Two customer entry points
 
 | | Connect existing project | Start new project |
@@ -25,13 +37,20 @@ not a copy of an employer or customer system.
    tests, PR approval, and **draft** PR creation.
 6. Customer reviews and decides what to merge; Orqestra has no automatic merge.
 
-The current local GitHub App discovery reads all installations visible to the
-configured GitHub App. **This is not tenant-safe self-service discovery for a
-hosted SaaS.** Before onboarding unrelated organizations, map authenticated
-GitHub installations to exactly one authorized workspace, enforce that mapping
-on discovery and project creation, validate the repository belongs to that
-installation, and support revocation. Until then, use a controlled trusted
-pilot deployment and do not expose the operator service to unrelated customers.
+GitHub App installation discovery is now **workspace-scoped**. To establish a
+connection, an Orqestra workspace admin signs in, selects a numeric GitHub App
+installation ID and completes a GitHub user-to-server OAuth exchange. The server
+requires a one-time, session-bound state and verifies that the user can access
+that installation and has `admin` permissions on each repository it grants.
+Tokens are not stored. Installation IDs are unique across Orqestra workspaces;
+the server also rechecks GitHub App repository access when registering projects.
+
+The stored repository allowlist is a snapshot of authorization at connection
+time. **Do not consider this full production permission revocation support.**
+Before a public rollout, respond to app installation removals and repository
+permission changes, revoke running task tokens as appropriate, provide customer
+disconnect/offboarding, reconcile historical projects, and independently verify
+tenant isolation of background workers.
 
 ### Start new project (intake supported in 0.9.0)
 
@@ -89,7 +108,10 @@ restricted to authorized meetings, and respect participant notice and consent.
 
 ## Production readiness checklist
 
-- [ ] Bind GitHub installations and repositories to authorized workspaces
+- [x] Bind GitHub installations and admin-authorized repositories to workspaces via OAuth
+- [ ] Live-test OAuth callbacks and GitHub App installations with a nonproduction customer
+- [ ] Reconcile grants after GitHub App installation, repository, and access changes
+- [ ] Re-onboard pre-0.10 projects with verified connections
 - [ ] OIDC/SSO, verified invitations, rate limits, recovery, HTTPS
 - [ ] Auditable and revocable connector authorization
 - [ ] Private ephemeral code execution with quotas and network restrictions
