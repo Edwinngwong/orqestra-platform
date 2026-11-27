@@ -81,7 +81,7 @@ test("serves the operator console when a Muse proposal query is present", async 
   try {
     const response = await fetch(`http://127.0.0.1:${address.port}/?muse=60f3c9a5-bb09-4087-a779-78df0b6875b5`);
     assert.equal(response.status, 200);
-    assert.match(await response.text(), /ORQESTRA/);
+    assert.match(await response.text(), /id="login-form"/);
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 });
 
