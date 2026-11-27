@@ -304,6 +304,47 @@ export function createPlatformServer(orchestrator: Orchestrator, options: { webh
             requestedBy: principal.email,
           }));
         }
+        const activate = request.url?.match(/^\/v1\/new-project-intakes\/([0-9a-f-]+)\/activate$/i);
+        if (request.method === "POST" && activate) {
+          const input = JSON.parse((await body(request)).toString("utf8")) as {
+            workspaceId?: string; repository?: string; githubInstallationId?: number;
+            defaultBranch?: string; tracker?: TrackerKind; jiraProjectKey?: string; policy?: Partial<ProjectPolicy>;
+          };
+          if (!input.workspaceId || !input.repository || !validRepository(input.repository) ||
+            !Number.isSafeInteger(input.githubInstallationId) || Number(input.githubInstallationId) <= 0) {
+            return json(response, 400, { error: "Valid workspace, installed repository and installation ID are required" });
+          }
+          if (!can(input.workspaceId, "admin")) return json(response, 403, { error: "Administrator role required" });
+          const intake = (await projects.listNewProjectIntakes(input.workspaceId)).find(value => value.id === activate[1]);
+          if (!intake || intake.status !== "pending_review") return json(response, 409, { error: "New-project request is missing or already activated" });
+          const tracker = input.tracker ?? "github_issue";
+          if (!["github_issue", "jira_issue", "orqestra_only"].includes(tracker) ||
+            (tracker === "jira_issue" && !input.jiraProjectKey?.trim())) return json(response, 400, { error: "Invalid tracker configuration" });
+          if (githubConnections) {
+            const grant = await githubConnections.getConnection(input.workspaceId, Number(input.githubInstallationId));
+            if (!grant || !grant.repositories.some(value => value.repository.toLowerCase() === input.repository!.toLowerCase())) {
+              return json(response, 403, { error: "Repository is not authorized for this workspace" });
+            }
+            if (!github) return json(response, 503, { error: "GitHub App is unavailable" });
+            const current = await github.repositoriesForInstallation(Number(input.githubInstallationId));
+            if (!current.some(value => value.repository.toLowerCase() === input.repository!.toLowerCase())) {
+              return json(response, 403, { error: "The GitHub App no longer has repository access" });
+            }
+          }
+          const policy = { ...defaultPolicy, ...input.policy };
+          if (!Array.isArray(policy.testCommand) || policy.testCommand.length < 1 ||
+            policy.timeoutSeconds < 1 || policy.timeoutSeconds > 1800 ||
+            policy.maxChangedFiles < 1 || policy.maxChangedFiles > 100 ||
+            policy.maxChangedBytes < 1 || policy.maxChangedBytes > 5_000_000 ||
+            !Array.isArray(policy.protectedPaths)) return json(response, 400, { error: "Invalid project policy" });
+          const activated = await projects.activateNewProjectIntake(activate[1]!, {
+            workspaceId: input.workspaceId, name: intake.name, repository: input.repository,
+            githubInstallationId: Number(input.githubInstallationId),
+            defaultBranch: input.defaultBranch?.trim() || "main", policy, tracker,
+            ...(input.jiraProjectKey?.trim() ? { jiraProjectKey: input.jiraProjectKey.trim() } : {}),
+          });
+          return json(response, 201, activated);
+        }
       }
       if (request.url?.startsWith("/v1/projects")) {
         if (!projects) return json(response, 501, { error: "Project registry requires PostgreSQL" });
