@@ -5,6 +5,28 @@ Control plane for the independent Orqestra AI SDLC MVP.
 Before contributing, read [`AGENTS.md`](AGENTS.md). It is the authoritative
 project-state and engineering guide, and every milestone commit must update it.
 
+## Website and client dashboard
+
+- **Public site:** `/` — responsive Orqestra landing page explaining both onboarding paths.
+- **Client sign-in and dashboard:** `/app` — invited users see their accessible projects, status timeline, approval queues, delivery runs and audit trails.
+- **Operator compatibility:** `/operator` and legacy `/?muse=<proposalId>` load the authenticated application.
+
+This is an **invite-only pilot**, not public self-service registration. Workspace owners add members through the admin panel. User identity and workspace roles are verified by the server for each API call.
+
+### Workspace-specific GitHub authorization
+
+To support customers who already have GitHub repositories, Orqestra now links GitHub App installations to authorized workspaces rather than offering global installation discovery to customers.
+
+1. Configure the GitHub App's OAuth callback URL as `<ORQESTRA_PUBLIC_URL>/v1/github/oauth/callback`. Set `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET`, and `ORQESTRA_PUBLIC_URL` from the same app.
+2. Ask a workspace owner/admin to sign in to `/app`. The owner installs the Orqestra GitHub App on selected repositories and obtains its numeric installation ID from GitHub's settings page.
+3. In **Connect an existing project**, they enter the installation ID and select **Authorize GitHub**.
+4. GitHub redirects the user back via a short-lived, single-use, session-bound OAuth state. The platform checks user installation access, the configured GitHub App ID and individual repository admin permissions before saving workspace grants.
+5. Repository selection then lists **only** repositories within the verified installation, checked against the saved grant and current App installation access.
+
+An installation can belong to only one Orqestra workspace; credentials and user access tokens are never stored in project records or the browser. Existing connected projects must be migrated before a GitHub connection may be removed.
+
+**Requirements before real customer testing:** public HTTPS origin, matching GitHub App OAuth callback, valid GitHub App ID/private key/client ID/client secret, PostgreSQL migrations through `011_workspace_github_connections.sql`, and an authenticated user. The connection flow is not live-tested against an external installation in this PR. See [onboarding architecture](docs/ONBOARDING_ARCHITECTURE.md) for production security gaps and approvals.
+
 ## First vertical slice
 
 `GitHub/Jira work item -> intake approval -> coding agent -> isolated tests -> PR approval -> draft PR`
@@ -95,7 +117,7 @@ The model response is bounded to 20 files and 1 MB, rejects absolute/traversal p
 
 For a live acceptance run, follow [the live setup checklist](docs/LIVE_SETUP.md). `scripts/bootstrap-local.sh` generates all non-provider secrets into an ignored, mode-0600 `.env.local` file.
 
-## Dual-mode customer onboarding (0.9.0)
+## Dual-mode customer onboarding (0.10.0)
 
 Orqestra now offers two entry points in the operator dashboard. Both operate under
 the existing workspace authorization and project boundary:
@@ -125,12 +147,12 @@ provisioning workflow will be built before automated setup is supported. Do not
 enter secrets, credentials, or sensitive personal data into the project-goal field.
 
 Run `npm run db:migrate` after upgrading to apply
-`010_new_project_intakes.sql` without deleting existing projects or runs.
+`010_new_project_intakes.sql` and `011_workspace_github_connections.sql` without deleting existing projects or runs.
 
 For the complete onboarding trust model and rollout requirements, read
-[`docs/ONBOARDING_ARCHITECTURE.md`](docs/ONBOARDING_ARCHITECTURE.md). The current
-GitHub App discovery is global to the configured app and must be scoped to a
-customer-authorized installation before this can be sold as a hosted multi-tenant service.
+[`docs/ONBOARDING_ARCHITECTURE.md`](docs/ONBOARDING_ARCHITECTURE.md). GitHub App discovery now requires a workspace-verified connection. Production
+rate limiting, account verification, revocation handling, and live OAuth testing
+remain necessary before general-availability customer onboarding.
 
 ## Workspaces and projects
 
