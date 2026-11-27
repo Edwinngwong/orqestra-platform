@@ -14,7 +14,7 @@ Do not use, request, reproduce, translate, or derive from any employer-proprieta
 - Platform version: 0.9.0
 - Latest migration: 010_new_project_intakes.sql
 - Compatible sandbox version: 0.2.x
-- Milestone status: implemented; awaiting GitHub CI and local database acceptance
+- Milestone status: GitHub CI passing; customer-facing and local-live acceptance pending
 
 Current capabilities:
 
@@ -51,6 +51,7 @@ Known gaps before broad production use:
 - Inline diff review, usage metering, budgets, and customer billing.
 - Slack, Teams, and email channel adapters.
 - Production WhatsApp system-user token lifecycle, business verification, permanent HTTPS hosting, rate limits, retention controls, and operational alerting.
+- Tenant-bound GitHub App installation authorization and repository selection; global installation discovery must not be exposed to unrelated hosted customers.
 - Jira OAuth/installation management; the current Jira adapter uses runtime-held service credentials.
 - Azure DevOps/GitLab code-host integrations.
 - Cloud-native ephemeral execution; the current Docker executor is local-development only.
@@ -77,6 +78,7 @@ It does not execute untrusted repository commands. That belongs to `orqestra-san
 - `src/orchestrator.ts`: run state machine and approval invariants.
 - `src/auth.ts`: password hashing, sessions, CSRF, and workspace roles.
 - `src/projects.ts`: workspace/project registry and durable new-project intake requests.
+- `docs/ONBOARDING_ARCHITECTURE.md`: dual-mode onboarding boundaries, trust model, and production readiness.
 - `src/muse.ts`: canonical proposal persistence, confirmation, tracker routing, and run creation.
 - `src/adapters/trackers.ts`: GitHub Issue, Jira, and Orqestra-only tracker adapters.
 - `src/whatsapp.ts`: signed webhook intake, durable message queue, authorization bindings, and Muse processing.
