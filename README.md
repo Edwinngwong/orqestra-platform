@@ -127,6 +127,11 @@ enter secrets, credentials, or sensitive personal data into the project-goal fie
 Run `npm run db:migrate` after upgrading to apply
 `010_new_project_intakes.sql` without deleting existing projects or runs.
 
+For the complete onboarding trust model and rollout requirements, read
+[`docs/ONBOARDING_ARCHITECTURE.md`](docs/ONBOARDING_ARCHITECTURE.md). The current
+GitHub App discovery is global to the configured app and must be scoped to a
+customer-authorized installation before this can be sold as a hosted multi-tenant service.
+
 ## Workspaces and projects
 
 The operator dashboard at `http://127.0.0.1:8786/` lists delivery runs and their audit history. A workspace represents a company or team. A project binds one GitHub repository and installation to a policy containing its test command, timeout, change-size limits, and protected paths.
