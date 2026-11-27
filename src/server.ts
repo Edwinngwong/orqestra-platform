@@ -209,6 +209,38 @@ export function createPlatformServer(orchestrator: Orchestrator, options: { webh
           return json(response, 201, await auth.invite(workspaceId, input.email, input.role));
         }
       }
+      if (request.url?.startsWith("/v1/new-project-intakes")) {
+        if (!projects) return json(response, 501, { error: "Workspace registry requires PostgreSQL" });
+        if (request.method === "GET") {
+          const url = new URL(request.url, "http://local");
+          if (url.pathname !== "/v1/new-project-intakes") return json(response, 404);
+          const workspaceId = url.searchParams.get("workspaceId") ?? undefined;
+          if (workspaceId && !can(workspaceId, "viewer")) return json(response, 403, { error: "Workspace access denied" });
+          const values = await projects.listNewProjectIntakes(workspaceId);
+          return json(response, 200, principal.system ? values : values.filter(value => can(value.workspaceId, "viewer")));
+        }
+        if (request.method === "POST" && request.url === "/v1/new-project-intakes") {
+          const input = JSON.parse((await body(request)).toString("utf8")) as {
+            workspaceId?: string; name?: string; goal?: string; ownershipMode?: string; monthlyBudgetUsd?: number;
+          };
+          if (!input.workspaceId || typeof input.name !== "string" || typeof input.goal !== "string" ||
+            !["customer_owned", "orqestra_managed"].includes(input.ownershipMode ?? "") ||
+            input.name.trim().length < 1 || input.name.trim().length > 120 ||
+            input.goal.trim().length < 20 || input.goal.trim().length > 4000 ||
+            (input.monthlyBudgetUsd !== undefined && (!Number.isSafeInteger(input.monthlyBudgetUsd) || input.monthlyBudgetUsd < 1 || input.monthlyBudgetUsd > 100_000))) {
+            return json(response, 400, { error: "Valid workspace, name (1-120), goal (20-4000), ownership, and optional monthly budget are required" });
+          }
+          if (!can(input.workspaceId, "admin")) return json(response, 403, { error: "Administrator role required" });
+          const workspace = (await projects.listWorkspaces()).find(value => value.id === input.workspaceId);
+          if (!workspace) return json(response, 404, { error: "Workspace not found" });
+          return json(response, 201, await projects.createNewProjectIntake({
+            workspaceId: input.workspaceId, name: input.name.trim(), goal: input.goal.trim(),
+            ownershipMode: input.ownershipMode as "customer_owned" | "orqestra_managed",
+            ...(input.monthlyBudgetUsd === undefined ? {} : { monthlyBudgetUsd: input.monthlyBudgetUsd }),
+            requestedBy: principal.email,
+          }));
+        }
+      }
       if (request.url?.startsWith("/v1/projects")) {
         if (!projects) return json(response, 501, { error: "Project registry requires PostgreSQL" });
         if (request.method === "GET") {
