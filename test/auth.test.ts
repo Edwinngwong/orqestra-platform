@@ -53,6 +53,16 @@ test("enforces sessions, CSRF, and workspace roles", { skip: !process.env.TEST_D
     const invited = await fetch(`${base}/v1/workspaces/${workspace.id}/members`, { method: "POST", headers: { cookie: owner.cookie, "x-csrf-token": owner.csrf, "content-type": "application/json" }, body: JSON.stringify({ email: `new-${suffix}@example.test`, role: "reviewer" }) });
     assert.equal(invited.status, 201);
     assert.equal(typeof (await invited.json() as { temporaryPassword?: string }).temporaryPassword, "string");
+    const intakePayload = { workspaceId: workspace.id, name: "New portal", goal: "Create a support portal with client tickets.", ownershipMode: "customer_owned" };
+    const ownerIntake = await fetch(`${base}/v1/new-project-intakes`, { method: "POST", headers: { cookie: owner.cookie, "x-csrf-token": owner.csrf, "content-type": "application/json" }, body: JSON.stringify(intakePayload) });
+    assert.equal(ownerIntake.status, 201, await ownerIntake.text());
+    const deniedIntake = await fetch(`${base}/v1/new-project-intakes`, { method: "POST", headers: { cookie: viewer.cookie, "x-csrf-token": viewer.csrf, "content-type": "application/json" }, body: JSON.stringify(intakePayload) });
+    assert.equal(deniedIntake.status, 403);
+    const viewIntakes = await fetch(`${base}/v1/new-project-intakes?workspaceId=${workspace.id}`, { headers: { cookie: viewer.cookie } });
+    assert.equal(viewIntakes.status, 200);
+    assert.equal((await viewIntakes.json() as unknown[]).length, 1);
+    const noCsrf = await fetch(`${base}/v1/new-project-intakes`, { method: "POST", headers: { cookie: owner.cookie, "content-type": "application/json" }, body: JSON.stringify(intakePayload) });
+    assert.equal(noCsrf.status, 403);
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     await pool.query("DELETE FROM workspaces WHERE id=$1", [workspace.id]);
