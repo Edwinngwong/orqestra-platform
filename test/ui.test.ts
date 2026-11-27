@@ -8,6 +8,11 @@ test("operator dashboard ships syntactically valid Muse, tracker, and WhatsApp c
   assert.match(operatorHtml, /value="jira_issue"/);
   assert.match(operatorHtml, /value="orqestra_only"/);
   assert.match(operatorHtml, /id="whatsapp-form"/);
+  assert.match(operatorHtml, /id="new-project-form"/);
+  assert.match(operatorHtml, /id="new-project-intakes"/);
+  assert.match(operatorHtml, /Start a new project instead/);
+  assert.match(operatorHtml, /Connect an existing project instead/);
+  assert.match(operatorHtml, /No infrastructure was provisioned/);
   assert.match(operatorHtml, /Bind my number/);
   assert.match(operatorHtml, /Revoke/);
   const script = operatorHtml.match(/<script>([\s\S]*)<\/script>/)?.[1];
