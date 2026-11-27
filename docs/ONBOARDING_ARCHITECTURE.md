@@ -61,6 +61,16 @@ tenant isolation of background workers.
 4. Submit a `pending_review` intake request.
 5. A human evaluates scope, technology template, hosting ownership,
    requirements, cost estimates, and separate customer authorization.
+6. Once an authorized repository exists and is connected through the GitHub
+   App, an admin selects **Continue setup**, chooses the installation and
+   repository, and activates the original request. This registers the project
+   and records the intake-to-project link in one database transaction. Repeated
+   activation attempts fail.
+
+Customer-owned and Orqestra-managed projects both need an approved repository
+before AI coding begins. The platform **does not** create new repositories or
+provision AWS/cloud resources yet. Those require a separately approved,
+template-based, budget-controlled provisioning service.
 
 This **does not** create an executable `projects` record, trigger a run, spend
 money, create a GitHub repository, grant cloud permissions, or deploy code.
