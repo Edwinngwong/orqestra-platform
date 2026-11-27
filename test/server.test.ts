@@ -189,3 +189,39 @@ test("workspace GitHub connections restrict repository discovery and project reg
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }
 });
+
+test("new-project activation requires an approved repository and links the intake exactly once", async () => {
+  const registry = new MemoryProjectRegistry();
+  const workspace = await registry.createWorkspace({ name: "New ideas", slug: "new-ideas" });
+  const intake = await registry.createNewProjectIntake({ workspaceId: workspace.id,
+    name: "Appointment portal", goal: "Customers should book appointments online.", ownershipMode: "customer_owned",
+    requestedBy: "owner@example.test" });
+  const grants = new MemoryGitHubConnectionRegistry();
+  await grants.saveConnection({ workspaceId: workspace.id, installationId: 45, accountLogin: "acme",
+    repositories: [{ repository: "acme/appointment-portal", defaultBranch: "main" }],
+    connectedBy: "owner", connectedAt: new Date().toISOString() });
+  const github = { async repositoriesForInstallation() {
+    return [{ installationId: 45, repository: "acme/appointment-portal", defaultBranch: "main" },
+      { installationId: 45, repository: "acme/private", defaultBranch: "main" }];
+  }} as unknown as GitHubAppTokens;
+  const orch = new Orchestrator({ async implement() { throw new Error("not called"); } },
+    { async runTests() { throw new Error("not called"); } }, { async createDraft() { throw new Error("not called"); } });
+  const server = createPlatformServer(orch, { webhookSecret: "secret", operatorToken: "operator-secret" },
+    undefined, registry, github, undefined, undefined, undefined, grants);
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address(); assert(address && typeof address === "object");
+  const base = `http://127.0.0.1:${address.port}`, headers = { authorization: "Bearer operator-secret", "content-type": "application/json" };
+  const path = `${base}/v1/new-project-intakes/${intake.id}/activate`;
+  try {
+    const input = { workspaceId: workspace.id, repository: "acme/private", githubInstallationId: 45 };
+    assert.equal((await fetch(path, { method: "POST", headers, body: JSON.stringify(input) })).status, 403);
+    const approved = await fetch(path, { method: "POST", headers,
+      body: JSON.stringify({ ...input, repository: "acme/appointment-portal" }) });
+    assert.equal(approved.status, 201, await approved.text());
+    const result = await registry.listNewProjectIntakes(workspace.id);
+    assert.equal(result[0]?.status, "activated");
+    assert.equal((await registry.listProjects(workspace.id))[0]?.name, "Appointment portal");
+    assert.equal((await fetch(path, { method: "POST", headers,
+      body: JSON.stringify({ ...input, repository: "acme/appointment-portal" }) })).status, 409);
+  } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+});
