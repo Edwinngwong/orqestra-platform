@@ -23,6 +23,25 @@ export class GitHubAppTokens {
     if (!result.token) throw new Error("GitHub did not return an installation token");
     return result.token;
   }
+  async repositoriesForInstallation(installationId: number): Promise<Array<{ installationId: number; repository: string; defaultBranch: string }>> {
+    if (!Number.isSafeInteger(installationId) || installationId <= 0) throw new Error("Valid GitHub installation required");
+    const token = await this.installationToken(installationId);
+    const result: Array<{ installationId: number; repository: string; defaultBranch: string }> = [];
+    for (let page = 1; page <= 10; page++) {
+      const response = await fetch(`${this.apiBase}/installation/repositories?per_page=100&page=${page}`, {
+        headers: { accept: "application/vnd.github+json", authorization: `Bearer ${token}`,
+          "x-github-api-version": "2022-11-28" },
+      });
+      if (!response.ok) throw new Error(`GitHub repositories lookup failed (${response.status})`);
+      const data = await response.json() as { repositories?: Array<{ full_name: string; default_branch?: string }> };
+      const repos = data.repositories ?? [];
+      result.push(...repos.map(value => ({
+        installationId, repository: value.full_name, defaultBranch: value.default_branch ?? "main",
+      })));
+      if (repos.length < 100) break;
+    }
+    return result;
+  }
   async repositories(): Promise<Array<{ installationId: number; repository: string; defaultBranch: string }>> {
     const installationsResponse = await fetch(`${this.apiBase}/app/installations`, { headers: { accept: "application/vnd.github+json", authorization: `Bearer ${this.jwt()}`, "x-github-api-version": "2022-11-28" } });
     if (!installationsResponse.ok) throw new Error(`GitHub installations lookup failed (${installationsResponse.status})`);
