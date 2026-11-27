@@ -10,11 +10,11 @@ Do not use, request, reproduce, translate, or derive from any employer-proprieta
 
 ## Current milestone
 
-- Milestone: Public client site, workflow portal, verified GitHub onboarding
-- Platform version: 0.10.0
-- Latest migration: 011_workspace_github_connections.sql
+- Milestone: Client site, GitHub authorization, and new-project activation
+- Platform version: 0.11.0
+- Latest migration: 012_new_project_activation.sql
 - Compatible sandbox version: 0.2.x
-- Milestone status: implemented; latest CI and live GitHub OAuth acceptance pending
+- Milestone status: implementation complete; CI verification and live provider acceptance pending
 
 Current capabilities:
 
@@ -32,7 +32,7 @@ Current capabilities:
 - Workspace-filtered project cards, approval counts, stage-by-stage workflow history, and explicit new/existing project onboarding.
 - GitHub user-to-server OAuth proof, one-time session-bound state, GitHub-admin repository grants, workspace-only installation discovery, and guarded disconnects.
 - Local operator dashboard for onboarding, runs, audits, approvals, retries, cancellation, members, and PR links.
-- Durable new-project intake requests scoped to workspaces, with customer-owned or Orqestra-managed hosting preference and optional monthly budget. New-project intake does not create repositories, cloud resources, or executable work until separately designed and approved.
+- Durable new-project intake requests scoped to workspaces, with customer-owned or Orqestra-managed hosting preference and optional monthly budget. New-project intake cannot provision cloud resources or execute work. An admin may activate a request only by assigning a verified, customer-authorized GitHub repository; PostgreSQL activation is transactional and single-use.
 - Channel-independent Muse proposals with explicit reviewer confirmation and durable provenance.
 - Per-project routing to GitHub Issues, Jira, or Orqestra-only tracking while keeping the code host independent.
 - Dashboard support for tracker selection, Muse proposal review, confirmation, and external ticket links.
@@ -113,6 +113,7 @@ It does not execute untrusted repository commands. That belongs to `orqestra-san
 - Never expose global GitHub App installations in customer sessions; filter repository selection by OAuth-verified workspace grants.
 - OAuth authorization states expire quickly, are session-bound and single-use. Never store GitHub user access tokens.
 - Never treat a new-project intake as authorization to create resources, spend money, execute code, or trigger a deployment.
+- New-project activation must bind an already authorized repository and occur once, atomically, without skipping existing delivery approvals.
 - Ignore ordinary WhatsApp conversation; only explicit `@muse` messages enter the durable inbox.
 - Never process a WhatsApp sender without an active binding and current workspace membership.
 - A WhatsApp message may create only a proposal; it cannot confirm, approve intake, approve a PR, or merge.
