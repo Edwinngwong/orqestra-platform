@@ -132,10 +132,12 @@ export class GitHubOAuthConnections {
     if (!response.ok) throw new Error(`GitHub authorization verification failed (${response.status})`);
     return await response.json() as T;
   }
-  async finish(code: string, state: string, userId: string, sessionHash: string): Promise<GitHubConnection> {
+  async finish(code: string, state: string, userId: string, sessionHash: string,
+    authorizeWorkspace: (workspaceId: string) => boolean): Promise<GitHubConnection> {
     if (!/^[a-zA-Z0-9_-]{20,150}$/.test(state) || !/^[a-zA-Z0-9_-]{5,500}$/.test(code)) throw new Error("Invalid GitHub callback");
     const pending = await this.registry.consumeChallenge(hash(state), userId, sessionHash);
     if (!pending) throw new Error("GitHub authorization has expired or was already used");
+    if (!authorizeWorkspace(pending.workspaceId)) throw new Error("Workspace administrator access is required");
     const exchange = await this.transport(`${this.oauthBase}/login/oauth/access_token`, {
       method: "POST", headers: { accept: "application/json", "content-type": "application/json" },
       body: JSON.stringify({ client_id: this.config.clientId, client_secret: this.config.clientSecret,
