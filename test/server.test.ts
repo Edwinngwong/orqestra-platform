@@ -82,3 +82,41 @@ test("serves the operator console when a Muse proposal query is present", async 
     assert.match(await response.text(), /ORQESTRA/);
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 });
+
+test("new-project requests validate inputs and do not create repositories or run workflows", async () => {
+  const orchestrator = new Orchestrator(
+    { async implement() { throw new Error("not called"); } },
+    { async runTests() { throw new Error("not called"); } },
+    { async createDraft() { throw new Error("not called"); } },
+  );
+  const registry = new MemoryProjectRegistry();
+  const server = createPlatformServer(orchestrator, { webhookSecret: "secret", operatorToken: "operator-secret" }, undefined, registry);
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address(); assert(address && typeof address === "object");
+  const base = `http://127.0.0.1:${address.port}`;
+  const headers = { authorization: "Bearer operator-secret", "content-type": "application/json" };
+  try {
+    const workspace = await registry.createWorkspace({ name: "Acme", slug: "acme" });
+    const valid = { workspaceId: workspace.id, name: "Booking Platform", goal: "Customers can book and manage their appointments.", ownershipMode: "orqestra_managed" };
+    assert.equal((await fetch(`${base}/v1/new-project-intakes`)).status, 401);
+    for (const change of [
+      { goal: "short" }, { name: "" }, { ownershipMode: "unknown" },
+      { monthlyBudgetUsd: 0 }, { monthlyBudgetUsd: 1.5 }, { monthlyBudgetUsd: 100001 },
+    ]) {
+      const response = await fetch(`${base}/v1/new-project-intakes`, { method: "POST", headers, body: JSON.stringify({ ...valid, ...change }) });
+      assert.equal(response.status, 400, await response.text());
+    }
+    const response = await fetch(`${base}/v1/new-project-intakes`, { method: "POST", headers, body: JSON.stringify(valid) });
+    assert.equal(response.status, 201);
+    const item = await response.json() as { id: string; requestedBy: string; status: string };
+    assert.equal(item.status, "pending_review");
+    assert.equal(item.requestedBy, "local-operator");
+    const listed = await fetch(`${base}/v1/new-project-intakes?workspaceId=${workspace.id}`, { headers });
+    assert.equal(listed.status, 200);
+    assert.deepEqual((await listed.json() as Array<{ id: string }>).map(value => value.id), [item.id]);
+    assert.deepEqual(await (await fetch(`${base}/v1/projects`, { headers })).json(), []);
+    assert.deepEqual(await (await fetch(`${base}/v1/runs`, { headers })).json(), []);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
