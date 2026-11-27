@@ -163,7 +163,7 @@ remain necessary before general-availability customer onboarding.
 
 ## Workspaces and projects
 
-The operator dashboard at `http://127.0.0.1:8786/` lists delivery runs and their audit history. A workspace represents a company or team. A project binds one GitHub repository and installation to a policy containing its test command, timeout, change-size limits, and protected paths.
+The client dashboard at `http://127.0.0.1:8786/app` lists authorized projects, delivery runs, approvals and audit history; `/` is the public website. A workspace represents a company or team. A project binds one GitHub repository and installation to a policy containing its test command, timeout, change-size limits, and protected paths.
 
 Only repositories explicitly registered as projects can create runs. The dashboard discovers repositories already authorized through the GitHub App, so operators never enter installation tokens or private keys.
 
