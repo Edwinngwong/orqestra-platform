@@ -48,6 +48,9 @@ test("enforces sessions, CSRF, and workspace roles", { skip: !process.env.TEST_D
     assert.equal(ownerList.status, 200);
     assert.equal((await ownerList.json() as Array<{ id: string }>)[0]?.id, workspace.id);
     const viewer = await login(`viewer-${suffix}@example.test`);
+    assert.match(owner.cookie, /orqestra_session=/);
+    assert.equal((await fetch(`${base}/v1/github/connections?workspaceId=${workspace.id}`,
+      { headers: { cookie: viewer.cookie } })).status, 501);
     const denied = await fetch(`${base}/v1/projects`, { method: "POST", headers: { cookie: viewer.cookie, "x-csrf-token": viewer.csrf, "content-type": "application/json" }, body: JSON.stringify({ workspaceId: workspace.id, name: "Denied", repository: "acme/denied", githubInstallationId: 1 }) });
     assert.equal(denied.status, 403);
     const invited = await fetch(`${base}/v1/workspaces/${workspace.id}/members`, { method: "POST", headers: { cookie: owner.cookie, "x-csrf-token": owner.csrf, "content-type": "application/json" }, body: JSON.stringify({ email: `new-${suffix}@example.test`, role: "reviewer" }) });
