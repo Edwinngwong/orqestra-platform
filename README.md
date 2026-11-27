@@ -95,6 +95,38 @@ The model response is bounded to 20 files and 1 MB, rejects absolute/traversal p
 
 For a live acceptance run, follow [the live setup checklist](docs/LIVE_SETUP.md). `scripts/bootstrap-local.sh` generates all non-provider secrets into an ignored, mode-0600 `.env.local` file.
 
+## Dual-mode customer onboarding (0.9.0)
+
+Orqestra now offers two entry points in the operator dashboard. Both operate under
+the existing workspace authorization and project boundary:
+
+1. **Connect an existing project** — select a GitHub repository already authorized
+   through the Orqestra GitHub App. Provide its project policy, tracker, and test
+   command. This is the existing connected-project workflow and can be used for
+   supervised issue-to-draft-PR delivery.
+2. **Start a new project** — submit a name and meaningful project goal, select
+   either customer-owned accounts or a request for Orqestra-managed operations,
+   and optionally specify a monthly budget in USD. The request is stored with
+   status `pending_review` and the authenticated submitter identity. It cannot
+   provision GitHub repositories, infrastructure, databases, or launch an AI run.
+
+New-project requests are accessible through:
+
+- `GET /v1/new-project-intakes` — returns only visible workspaces.
+- `GET /v1/new-project-intakes?workspaceId=<id>` — requires workspace viewer access.
+- `POST /v1/new-project-intakes` — requires workspace admin/owner access and
+  CSRF validation for session users. Body: `workspaceId`, `name`, `goal`,
+  `ownershipMode` (`customer_owned` or `orqestra_managed`), and optional
+  `monthlyBudgetUsd` (positive integer).
+
+A new-project request is not a contract, a quote, a billable task, or permission
+to incur cloud costs. A separate approval, customer authorization, and managed
+provisioning workflow will be built before automated setup is supported. Do not
+enter secrets, credentials, or sensitive personal data into the project-goal field.
+
+Run `npm run db:migrate` after upgrading to apply
+`010_new_project_intakes.sql` without deleting existing projects or runs.
+
 ## Workspaces and projects
 
 The operator dashboard at `http://127.0.0.1:8786/` lists delivery runs and their audit history. A workspace represents a company or team. A project binds one GitHub repository and installation to a policy containing its test command, timeout, change-size limits, and protected paths.
