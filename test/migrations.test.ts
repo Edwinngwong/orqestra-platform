@@ -62,6 +62,21 @@ test("new project intake records are durable and isolated from executable projec
       assert.equal(intake.monthlyBudgetUsd, 250);
       assert.equal((await registry.listNewProjectIntakes(workspace.id))[0]?.id, intake.id);
       assert.deepEqual(await registry.listProjects(workspace.id), []);
+      const activated = await registry.activateNewProjectIntake(intake.id, {
+        workspaceId: workspace.id, name: intake.name, repository: "acme/payments-" + slug,
+        defaultBranch: "main", githubInstallationId: 123,
+        policy: { testCommand: ["npm", "test"], timeoutSeconds: 300, maxChangedFiles: 10,
+          maxChangedBytes: 100000, protectedPaths: [".github"] }, tracker: "github_issue",
+      });
+      assert.equal(activated.intake.status, "activated");
+      assert.equal(activated.intake.activatedProjectId, activated.project.id);
+      assert.equal((await registry.listNewProjectIntakes(workspace.id))[0]?.status, "activated");
+      await assert.rejects(registry.activateNewProjectIntake(intake.id, {
+        workspaceId: workspace.id, name: "Duplicate", repository: "acme/duplicate-" + slug,
+        defaultBranch: "main", githubInstallationId: 123,
+        policy: { testCommand: ["npm", "test"], timeoutSeconds: 300, maxChangedFiles: 10,
+          maxChangedBytes: 100000, protectedPaths: [".github"] },
+      }), /already activated/);
     } finally {
       await pool.query("DELETE FROM workspaces WHERE id=$1", [workspace.id]);
     }
