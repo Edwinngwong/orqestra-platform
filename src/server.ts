@@ -11,6 +11,8 @@ import { PostgresRunStore } from "./postgres-store.js";
 import { MemoryJobQueue, PostgresJobQueue, type JobQueue } from "./queue/jobs.js";
 import { JsonFileRunStore, type RunStore } from "./store.js";
 import { operatorHtml } from "./ui/operator.js";
+import { landingHtml } from "./ui/landing.js";
+import { GitHubOAuthConnections, MemoryGitHubConnectionRegistry, PostgresGitHubConnectionRegistry, type GitHubConnectionRegistry } from "./github-connections.js";
 import { MemoryProjectRegistry, PostgresProjectRegistry, type ProjectRegistry } from "./projects.js";
 import type { ProjectPolicy } from "./domain.js";
 import { AuthService, type Principal, type WorkspaceRole } from "./auth.js";
@@ -45,10 +47,19 @@ function validRepository(value: string) { return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.
 
 const systemPrincipal: Principal = { userId: "system", email: "local-operator", mustChangePassword: false, system: true, roles: new Map() };
 
-export function createPlatformServer(orchestrator: Orchestrator, options: { webhookSecret: string; operatorToken: string; whatsappAppSecret?: string; whatsappVerifyToken?: string; whatsappPhoneNumberId?: string; publicBaseUrl?: string }, queue: JobQueue = new MemoryJobQueue(), projects?: ProjectRegistry, github?: GitHubAppTokens, auth?: AuthService, muse?: MuseService, whatsapp?: WhatsAppMuseService) {
+export function createPlatformServer(orchestrator: Orchestrator, options: { webhookSecret: string; operatorToken: string; whatsappAppSecret?: string; whatsappVerifyToken?: string; whatsappPhoneNumberId?: string; publicBaseUrl?: string }, queue: JobQueue = new MemoryJobQueue(), projects?: ProjectRegistry, github?: GitHubAppTokens, auth?: AuthService, muse?: MuseService, whatsapp?: WhatsAppMuseService, githubConnections?: GitHubConnectionRegistry, githubOAuth?: GitHubOAuthConnections) {
   return createServer(async (request, response) => {
     try {
-      if (request.method === "GET" && new URL(request.url ?? "/", "http://local").pathname === "/") { response.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'", "x-content-type-options": "nosniff" }); response.end(operatorHtml); return; }
+      if (request.method === "GET") {
+        const url = new URL(request.url ?? "/", "http://local");
+        if (url.pathname === "/" || url.pathname === "/app" || url.pathname === "/operator") {
+          const clientDashboard = url.pathname !== "/" || url.searchParams.has("muse");
+          response.writeHead(200, { "content-type": "text/html; charset=utf-8",
+            "content-security-policy": "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'",
+            "x-content-type-options": "nosniff", "referrer-policy": "strict-origin-when-cross-origin", "cache-control": "no-store" });
+          response.end(clientDashboard ? operatorHtml : landingHtml); return;
+        }
+      }
       if (request.url?.startsWith("/webhooks/whatsapp") && request.method === "GET") {
         if (!whatsapp || !options.whatsappVerifyToken) return json(response, 404);
         const challenge = verifyMetaChallenge(new URL(request.url, "http://local").searchParams, options.whatsappVerifyToken);
@@ -85,6 +96,7 @@ export function createPlatformServer(orchestrator: Orchestrator, options: { webh
         if (projects) {
           const project = await projects.findByRepository(item.repository);
           if (!project) return json(response, 409, { error: "Repository is not configured as an Orqestra project" });
+          if (item.githubInstallationId && item.githubInstallationId !== project.githubInstallationId) return json(response, 403, { error: "GitHub installation does not match registered project" });
           item.workspaceId = project.workspaceId;
           item.projectId = project.id;
           item.defaultBranch = project.defaultBranch;
@@ -125,14 +137,66 @@ export function createPlatformServer(orchestrator: Orchestrator, options: { webh
         return json(response, 200, { changed: true });
       }
 
+      if (request.url?.startsWith("/v1/github/oauth/callback") && request.method === "GET") {
+        if (!githubOAuth || !auth || !principal || principal.system || !principal.sessionHash) return json(response, 403, { error: "A signed-in user is required to connect GitHub" });
+        const callback = new URL(request.url, "http://local");
+        const code = callback.searchParams.get("code"), state = callback.searchParams.get("state");
+        if (!code || !state) return json(response, 400, { error: "GitHub callback is missing a code or state" });
+        await githubOAuth.finish(code, state, principal.userId, principal.sessionHash,
+          workspaceId => auth.can(principal, workspaceId, "admin"));
+        response.writeHead(303, { location: "/app?github=connected", "cache-control": "no-store", "referrer-policy": "no-referrer" });
+        response.end(); return;
+      }
+      if (request.url?.startsWith("/v1/github/connections")) {
+        if (!githubConnections) return json(response, 501, { error: "GitHub connection registry is unavailable" });
+        const url = new URL(request.url, "http://local");
+        if (request.method === "GET" && url.pathname === "/v1/github/connections") {
+          const workspaceId = url.searchParams.get("workspaceId");
+          if (!workspaceId || !can(workspaceId, "admin")) return json(response, 403, { error: "Workspace administrator role required" });
+          return json(response, 200, await githubConnections.listConnections(workspaceId));
+        }
+        if (request.method === "POST" && url.pathname === "/v1/github/connections/start") {
+          if (!githubOAuth || !auth || principal.system || !principal.sessionHash) return json(response, 501, { error: "GitHub OAuth for a signed-in user is not configured" });
+          const input = JSON.parse((await body(request)).toString("utf8")) as { workspaceId?: string; installationId?: number };
+          if (!input.workspaceId || !can(input.workspaceId, "admin")) return json(response, 403, { error: "Workspace administrator role required" });
+          if (!Number.isSafeInteger(input.installationId) || Number(input.installationId) <= 0) return json(response, 400, { error: "Valid installation ID is required" });
+          const url = await githubOAuth.begin(input.workspaceId, principal.userId, principal.sessionHash, input.installationId!);
+          return json(response, 200, { authorizeUrl: url });
+        }
+        if (request.method === "DELETE") {
+          const matchConnection = url.pathname.match(/^\/v1\/github\/connections\/(\d+)$/);
+          const workspaceId = url.searchParams.get("workspaceId"), installationId = Number(matchConnection?.[1]);
+          if (!workspaceId || !can(workspaceId, "admin")) return json(response, 403, { error: "Workspace administrator role required" });
+          if (!matchConnection || !Number.isSafeInteger(installationId)) return json(response, 400, { error: "Invalid installation ID" });
+          if (projects && (await projects.listProjects(workspaceId)).some(project => project.githubInstallationId === installationId)) {
+            return json(response, 409, { error: "Remove or migrate existing projects before disconnecting GitHub" });
+          }
+          const removed = await githubConnections.removeConnection(workspaceId, installationId);
+          return removed ? json(response, 204) : json(response, 404, { error: "GitHub connection not found" });
+        }
+      }
       if (request.url === "/v1/runs" && request.method === "GET") {
         const runs = await orchestrator.list();
         return json(response, 200, principal.system ? runs : runs.filter(run => can(run.workItem.workspaceId, "viewer")));
       }
-      if (request.url === "/v1/github/repositories" && request.method === "GET") {
-        if (!principal.system && ![...principal.roles.values()].some(role => ["owner", "admin"].includes(role))) return json(response, 403, { error: "Administrator role required" });
+      if (request.url?.startsWith("/v1/github/repositories") && request.method === "GET") {
         if (!github) return json(response, 501, { error: "GitHub App discovery is unavailable" });
-        return json(response, 200, await github.repositories());
+        const url = new URL(request.url, "http://local");
+        if (url.pathname !== "/v1/github/repositories") return json(response, 404);
+        if (!githubConnections) {
+          if (!principal.system) return json(response, 503, { error: "Workspace-scoped GitHub connections are required" });
+          return json(response, 200, await github.repositories());
+        }
+        const workspaceId = url.searchParams.get("workspaceId");
+        if (!workspaceId || !can(workspaceId, "admin")) return json(response, 403, { error: "Workspace administrator role required" });
+        const connections = await githubConnections.listConnections(workspaceId);
+        const all: Array<{ installationId: number; repository: string; defaultBranch: string }> = [];
+        for (const connection of connections) {
+          const installed = await github.repositoriesForInstallation(connection.installationId);
+          const granted = new Set(connection.repositories.map(repo => repo.repository.toLowerCase()));
+          all.push(...installed.filter(repo => granted.has(repo.repository.toLowerCase())));
+        }
+        return json(response, 200, all.sort((a,b) => a.repository.localeCompare(b.repository)));
       }
       if (request.url?.startsWith("/v1/muse/work-items") && muse) {
         if (!projects) return json(response, 501, { error: "Muse requires the project registry" });
@@ -254,6 +318,17 @@ export function createPlatformServer(orchestrator: Orchestrator, options: { webh
           if (!can(input.workspaceId, "admin")) return json(response, 403, { error: "Administrator role required" });
           const tracker = input.tracker ?? "github_issue";
           if (!["github_issue", "jira_issue", "orqestra_only"].includes(tracker) || (tracker === "jira_issue" && !input.jiraProjectKey?.trim())) return json(response, 400, { error: "Valid tracker configuration is required" });
+          if (githubConnections) {
+            const grant = await githubConnections.getConnection(input.workspaceId, Number(input.githubInstallationId));
+            if (!grant || !grant.repositories.some(repo => repo.repository.toLowerCase() === input.repository!.toLowerCase())) {
+              return json(response, 403, { error: "Repository is not authorized for this workspace" });
+            }
+            if (!github) return json(response, 503, { error: "GitHub App is unavailable" });
+            const installed = await github.repositoriesForInstallation(Number(input.githubInstallationId));
+            if (!installed.some(repo => repo.repository.toLowerCase() === input.repository!.toLowerCase())) {
+              return json(response, 403, { error: "The GitHub App no longer has repository access" });
+            }
+          }
           const policy = { ...defaultPolicy, ...input.policy };
           if (!Array.isArray(policy.testCommand) || policy.testCommand.length < 1 || policy.timeoutSeconds < 1 || policy.timeoutSeconds > 1800 || policy.maxChangedFiles < 1 || policy.maxChangedFiles > 100 || policy.maxChangedBytes < 1 || policy.maxChangedBytes > 5_000_000 || !Array.isArray(policy.protectedPaths)) return json(response, 400, { error: "Invalid project policy" });
           return json(response, 201, await projects.createProject({ workspaceId: input.workspaceId, name: input.name.trim(), repository: input.repository, defaultBranch: input.defaultBranch?.trim() || "main", githubInstallationId: Number(input.githubInstallationId), policy, tracker, ...(input.jiraProjectKey?.trim() ? { jiraProjectKey: input.jiraProjectKey.trim() } : {}) }));
@@ -288,11 +363,11 @@ export function createPlatformServer(orchestrator: Orchestrator, options: { webh
   });
 }
 
-async function servicesFromEnvironment(): Promise<{ store: RunStore; queue: JobQueue; projects: ProjectRegistry; museStore: MuseStore; whatsappStore: WhatsAppStore; auth?: AuthService }> {
-  if (!process.env.DATABASE_URL) return { store: new JsonFileRunStore(process.env.ORQESTRA_DATA_PATH ?? ".data/runs.json"), queue: new MemoryJobQueue(), projects: new MemoryProjectRegistry(), museStore: new MemoryMuseStore(), whatsappStore: new MemoryWhatsAppStore() };
+async function servicesFromEnvironment(): Promise<{ store: RunStore; queue: JobQueue; projects: ProjectRegistry; museStore: MuseStore; whatsappStore: WhatsAppStore; githubConnections: GitHubConnectionRegistry; auth?: AuthService }> {
+  if (!process.env.DATABASE_URL) return { store: new JsonFileRunStore(process.env.ORQESTRA_DATA_PATH ?? ".data/runs.json"), queue: new MemoryJobQueue(), projects: new MemoryProjectRegistry(), museStore: new MemoryMuseStore(), whatsappStore: new MemoryWhatsAppStore(), githubConnections: new MemoryGitHubConnectionRegistry() };
   const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 10 });
   await pool.query("SELECT 1");
-  return { store: new PostgresRunStore(pool), queue: new PostgresJobQueue(pool), projects: new PostgresProjectRegistry(pool), museStore: new PostgresMuseStore(pool), whatsappStore: new PostgresWhatsAppStore(pool), auth: new AuthService(pool) };
+  return { store: new PostgresRunStore(pool), queue: new PostgresJobQueue(pool), projects: new PostgresProjectRegistry(pool), museStore: new PostgresMuseStore(pool), whatsappStore: new PostgresWhatsAppStore(pool), githubConnections: new PostgresGitHubConnectionRegistry(pool), auth: new AuthService(pool) };
 }
 
 if (process.env.NODE_ENV !== "test") {
@@ -318,6 +393,11 @@ if (process.env.NODE_ENV !== "test") {
   const triggers = (process.env.WHATSAPP_MUSE_TRIGGERS ?? "@muse,/muse,muse:").split(",").map(value => value.trim()).filter(Boolean);
   whatsapp = whatsappReady ? new WhatsAppMuseService(services.whatsappStore, services.projects, muse, new OpenAIMuseInterpreter(openaiKey, model), new WhatsAppCloudClient(process.env.WHATSAPP_PHONE_NUMBER_ID!, process.env.WHATSAPP_ACCESS_TOKEN!, process.env.WHATSAPP_GRAPH_VERSION ?? "v25.0"), triggers) : undefined;
   if (whatsapp) { await whatsapp.recover(); setInterval(() => Promise.all([whatsapp!.processNext(), whatsapp!.processNextNotification()]).catch(error => console.error("WhatsApp worker failed", error)), 2_000).unref(); }
+  const origin = process.env.ORQESTRA_PUBLIC_URL;
+  const clientId = process.env.GITHUB_OAUTH_CLIENT_ID, clientSecret = process.env.GITHUB_OAUTH_CLIENT_SECRET;
+  const githubOAuth = clientId && clientSecret && origin ?
+    new GitHubOAuthConnections(services.githubConnections, { clientId, clientSecret, appId,
+      callbackUrl: `${origin.replace(/\/$/, "")}/v1/github/oauth/callback` }) : undefined;
   const port = Number(process.env.PORT ?? 8786);
-  createPlatformServer(orchestrator, { webhookSecret, operatorToken, ...(process.env.WHATSAPP_APP_SECRET ? { whatsappAppSecret: process.env.WHATSAPP_APP_SECRET } : {}), ...(process.env.WHATSAPP_VERIFY_TOKEN ? { whatsappVerifyToken: process.env.WHATSAPP_VERIFY_TOKEN } : {}), ...(process.env.WHATSAPP_PHONE_NUMBER_ID ? { whatsappPhoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID } : {}), ...(publicBaseUrl ? { publicBaseUrl } : {}) }, services.queue, services.projects, tokens, services.auth, muse, whatsapp).listen(port, () => console.log(`Orqestra platform listening on ${port}`));
+  createPlatformServer(orchestrator, { webhookSecret, operatorToken, ...(process.env.WHATSAPP_APP_SECRET ? { whatsappAppSecret: process.env.WHATSAPP_APP_SECRET } : {}), ...(process.env.WHATSAPP_VERIFY_TOKEN ? { whatsappVerifyToken: process.env.WHATSAPP_VERIFY_TOKEN } : {}), ...(process.env.WHATSAPP_PHONE_NUMBER_ID ? { whatsappPhoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID } : {}), ...(publicBaseUrl ? { publicBaseUrl } : {}) }, services.queue, services.projects, tokens, services.auth, muse, whatsapp, services.githubConnections, githubOAuth).listen(port, () => console.log(`Orqestra platform listening on ${port}`));
 }
