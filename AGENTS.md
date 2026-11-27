@@ -14,7 +14,7 @@ Do not use, request, reproduce, translate, or derive from any employer-proprieta
 - Platform version: 0.11.0
 - Latest migration: 012_new_project_activation.sql
 - Compatible sandbox version: 0.2.x
-- Milestone status: implementation complete; CI verification and live provider acceptance pending
+- Milestone status: GitHub CI passing; live GitHub OAuth acceptance and public deployment pending
 
 Current capabilities:
 
