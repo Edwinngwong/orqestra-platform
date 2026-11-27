@@ -30,3 +30,26 @@ test("new-project intake is workspace-scoped and never creates an executable pro
   returned[0]!.name = "mutated";
   assert.equal((await registry.listNewProjectIntakes(first.id))[0]?.name, "Customer portal");
 });
+
+test("new-project activation links the original intake to a configured project only once", async () => {
+  const registry = new MemoryProjectRegistry();
+  const workspace = await registry.createWorkspace({ name: "Starter", slug: "starter-activation" });
+  const intake = await registry.createNewProjectIntake({
+    workspaceId: workspace.id, name: "Fresh portal", goal: "Build a secure portal for client appointments.",
+    ownershipMode: "customer_owned", requestedBy: "admin@example.test",
+  });
+  const policy = { testCommand: ["npm", "test"], timeoutSeconds: 300, maxChangedFiles: 10,
+    maxChangedBytes: 100_000, protectedPaths: [".github"] };
+  const result = await registry.activateNewProjectIntake(intake.id, {
+    workspaceId: workspace.id, name: intake.name, repository: "acme/fresh-portal", defaultBranch: "main",
+    githubInstallationId: 99, policy, tracker: "github_issue",
+  });
+  assert.equal(result.intake.status, "activated");
+  assert.equal(result.intake.activatedProjectId, result.project.id);
+  assert.equal((await registry.listNewProjectIntakes(workspace.id))[0]?.status, "activated");
+  assert.equal((await registry.listProjects(workspace.id))[0]?.id, result.project.id);
+  await assert.rejects(registry.activateNewProjectIntake(intake.id, {
+    workspaceId: workspace.id, name: intake.name, repository: "acme/second", defaultBranch: "main",
+    githubInstallationId: 99, policy, tracker: "github_issue",
+  }), /already activated/);
+});
